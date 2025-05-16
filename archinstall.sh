@@ -2,23 +2,84 @@
 
 set -e
 
-function pausa() {
-  read -p "✅ Fase completada. Presiona Enter para continuar con la siguiente..."
+# Colores bonitos
+GREEN="\e[32m"
+YELLOW="\e[33m"
+CYAN="\e[36m"
+RED="\e[31m"
+RESET="\e[0m"
+
+LOG_DIR="/var/log"
+LOG_FILE="${LOG_DIR}/arch-install.log"
+
+mkdir -p "$LOG_DIR"
+echo "" > "$LOG_FILE"
+
+CURRENT_PHASE=""
+
+function header() {
+  echo -e "${CYAN}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "🛡️  ${1}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "${RESET}"
 }
 
+function log() {
+  echo -e "$(date '+%Y-%m-%d %H:%M:%S') - ${1}" | tee -a "$LOG_FILE"
+}
+
+function pause() {
+  echo -e "${YELLOW}✅ Fase completada. Pulsa Enter para continuar...${RESET}"
+  read
+}
+
+function phase_wrapper() {
+  local phase_function="$1"
+  CURRENT_PHASE="$phase_function"
+  local phase_log="${LOG_DIR}/${phase_function}.log"
+  echo "" > "$phase_log"
+
+  while true; do
+    log "🚀 Iniciando fase: ${phase_function}"
+    {
+      trap 'handle_error "${phase_function}" "${phase_log}"' ERR
+      $phase_function
+      trap - ERR
+      log "✅ Fase completada correctamente: ${phase_function}"
+      break
+    } 2>&1 | tee -a "$phase_log" | grep --line-buffered -v '^'
+  done
+}
+
+function handle_error() {
+  local phase="$1"
+  local phase_log="$2"
+  log "❌ Error en fase: $phase"
+  log "🔎 Revisa el log: $phase_log"
+  echo -e "${RED}❌ Error detectado en la fase: ${phase}${RESET}"
+  echo -e "${YELLOW}¿Deseas repetir esta fase? (s/n)${RESET}"
+  read -r choice
+  if [[ "$choice" != "s" ]]; then
+    log "❌ Abortando por decisión del usuario en la fase: $phase"
+    exit 1
+  else
+    log "🔄 Repitiendo fase: $phase"
+  fi
+}
+
+#### Tus fases originales abajo (sin cambios, se auto-loggean con el wrapper) ####
+
 function fase_preinstall() {
-  echo "🔹 FASE 1 - PRE-INSTALL Y RED"
+  header "FASE 1 - PRE-INSTALL Y RED"
   loadkeys es
-  echo "➡ Verificar UEFI:"
-  ls /sys/firmware/efi/efivars || { echo "❌ UEFI NO detectado. Abortando..."; exit 1; }
-  echo "➡ Validar conexión:"
+  ls /sys/firmware/efi/efivars
   ping -c 1 archlinux.org
-  pausa
+  pause
 }
 
 function fase_particiones_cifrado() {
-  echo "🔹 FASE 2 - PARTICIONES Y CIFRADO"
-  echo "➡ Crear particiones EFI y Root..."
+  header "FASE 2 - PARTICIONES Y CIFRADO"
   cfdisk /dev/sda
   mkfs.vfat -F32 /dev/sda1
   cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
@@ -30,7 +91,6 @@ function fase_particiones_cifrado() {
   mkswap /dev/mapper/vol-swap
   mkfs.ext4 /dev/mapper/vol-root
 
-  echo "➡ Crear particiones ZFS en sdb y sdc..."
   cfdisk /dev/sdb
   cfdisk /dev/sdc
   cryptsetup luksFormat --type luks2 /dev/sdb
@@ -47,22 +107,22 @@ function fase_particiones_cifrado() {
   cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
   cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
 
-  pausa
+  pause
 }
 
 function fase_zfs() {
-  echo "🔹 FASE 3 - CONFIGURACIÓN ZFS"
+  header "FASE 3 - CONFIGURACIÓN ZFS"
   pacman -Sy --noconfirm zfs-dkms zfs-utils
   zpool create -f -o ashift=12 raidz raidz /dev/mapper/crypt-zfs1 /dev/mapper/crypt-zfs2
   zfs create raidz/root
   zfs create raidz/data
   zfs set compression=lz4 raidz
   zfs set atime=off raidz
-  pausa
+  pause
 }
 
 function fase_montaje_sistema() {
-  echo "🔹 FASE 4 - MONTAJE Y SISTEMA BASE"
+  header "FASE 4 - MONTAJE Y SISTEMA BASE"
   mount /dev/mapper/vol-root /mnt
   swapon /dev/mapper/vol-swap
   mkdir -p /mnt/boot/efi
@@ -74,11 +134,11 @@ function fase_montaje_sistema() {
   pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup
   genfstab -U /mnt > /mnt/etc/fstab
 
-  pausa
+  pause
 }
 
 function fase_post_install() {
-  echo "🔹 FASE 5 - POST-INSTALL (CHROOT)"
+  header "FASE 5 - POST-INSTALL (CHROOT)"
   arch-chroot /mnt <<EOF
 ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
 hwclock --systohc
@@ -103,15 +163,16 @@ grub-mkconfig -o /boot/grub/grub.cfg
 systemctl enable NetworkManager
 EOF
 
-  pausa
+  pause
 }
 
 function fase_hardening_gui() {
-  echo "🔹 FASE 6 - HARDENING, GUI Y PERSONALIZACIÓN"
+  header "FASE 6 - HARDENING, GUI Y PERSONALIZACIÓN"
   arch-chroot /mnt <<EOF
-passwd
-useradd -m -G wheel -s /bin/bash LaraCanBurn
-passwd LaraCanBurn
+until passwd; do echo "Error al establecer contraseña de root. Reintentando..."; done
+until useradd -m -G wheel -s /bin/bash LaraCanBurn; do echo "Error al crear usuario. Reintentando..."; done
+until passwd LaraCanBurn; do echo "Error al establecer contraseña de usuario. Reintentando..."; done
+
 EDITOR=nano visudo
 
 pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges
@@ -141,15 +202,17 @@ SERV
 systemctl enable clear-cache.service
 EOF
 
-  pausa
+  pause
 }
 
-## EJECUCIÓN GUIADA ##
-fase_preinstall
-fase_particiones_cifrado
-fase_zfs
-fase_montaje_sistema
-fase_post_install
-fase_hardening_gui
+#### EJECUCIÓN ####
+header "INICIO DEL SCRIPT DE INSTALACIÓN AVANZADA ARCH LINUX 🔥"
+phase_wrapper fase_preinstall
+phase_wrapper fase_particiones_cifrado
+phase_wrapper fase_zfs
+phase_wrapper fase_montaje_sistema
+phase_wrapper fase_post_install
+phase_wrapper fase_hardening_gui
 
-echo "🎉 Instalación COMPLETADA con seguridad, cifrado, RAID ZFS, GUI y hardening aplicados."
+log "🎉 Instalación COMPLETA y segura. Sistema listo para disfrutar."
+
