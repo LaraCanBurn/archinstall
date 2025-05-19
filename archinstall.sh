@@ -90,15 +90,7 @@ function fase_particiones_cifrado() {
 
 # 🔧 Instalación de ZFS (post-pacstrap)
 function instalar_zfs_autodetect() {
-  KERNEL=${1:-"linux"}
-  echo -e "${CYAN}🔍 Kernel seleccionado: $KERNEL${RESET}"
-
-  case "$KERNEL" in
-    linux) ZFS_PKG="zfs-linux" ;;
-    linux-zen) ZFS_PKG="zfs-linux-zen" ;;
-    linux-lts) ZFS_PKG="zfs-linux-lts" ;;
-    *) echo -e "${YELLOW}⚠️ Kernel no estándar. Se usará zfs-dkms${RESET}"; ZFS_PKG="zfs-dkms" ;;
-  esac
+  echo -e "${CYAN}🔍 Instalando ZFS DKMS para cualquier kernel...${RESET}"
 
   if ! grep -q "\[archzfs\]" /etc/pacman.conf; then
     echo -e "\n[archzfs]\nServer = https://archzfs.com/\$repo/x86_64" >> /etc/pacman.conf
@@ -107,8 +99,8 @@ function instalar_zfs_autodetect() {
     pacman -Sy
   fi
 
-  echo -e "${CYAN}📦 Instalando $ZFS_PKG...${RESET}"
-  pacman -S --noconfirm $ZFS_PKG zfs-utils || {
+  echo -e "${CYAN}📦 Instalando zfs-dkms y zfs-utils...${RESET}"
+  pacman -S --noconfirm zfs-dkms zfs-utils || {
     echo -e "${YELLOW}⚠️ Fallback a AUR...${RESET}"
     if command -v paru &>/dev/null; then
       paru -S --noconfirm zfs-dkms zfs-utils
@@ -119,7 +111,7 @@ function instalar_zfs_autodetect() {
       exit 1
     fi
   }
-  echo -e "${GREEN}✅ ZFS instalado correctamente.${RESET}"
+  echo -e "${GREEN}✅ ZFS DKMS instalado correctamente.${RESET}"
 }
 
 function fase_montaje_sistema() {
@@ -184,42 +176,41 @@ function fase_hardening_gui() {
       pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges && break
       echo "❗ Error instalando paquetes. Reintentando ($try/3)..."
       sleep 2
-      if [[ $try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
-    done
+    done 1; fi
 
     systemctl enable --now lightdm
     systemctl enable ufw
     ufw enable
 
     echo "blacklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
-    modprobe -r pcspkr
+    modprobe -r pcspkrcklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
 
     cat > /etc/systemd/system/clear-cache.service <<SERV
-[Unit]
+[Unit]    cat > /etc/systemd/system/clear-cache.service <<SERV
 Description=Clear Cache at Shutdown
-DefaultDependencies=no
+DefaultDependencies=noat Shutdown
+Before=shutdown.targetncies=no
 Before=shutdown.target
-
 [Service]
 Type=oneshot
-ExecStart=/bin/sync
+ExecStart=/bin/syncType=oneshot
 ExecStart=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
-
+art=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
 [Install]
 WantedBy=shutdown.target
+SERVet
 SERV
-
     systemctl enable clear-cache.service
-  '
+  'l enable clear-cache.service
   pausa
 }
-
+}
 #### 🧩 EJECUCIÓN FINAL ####
-header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
-fase_preinstall
-fase_particiones_cifrado
+header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"####
+fase_preinstaller "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
+fase_particiones_cifradofase_preinstall
 fase_montaje_sistema
-fase_post_install
-fase_hardening_gui
-
+fase_post_installe_montaje_sistema
+fase_hardening_guist_install
+ase_hardening_gui
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
