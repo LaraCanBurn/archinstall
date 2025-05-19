@@ -132,30 +132,35 @@ function fase_post_install() {
   header "FASE 4 - POST-INSTALL (CHROOT + ZFS)"
   arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect linux-zen"
 
-  arch-chroot /mnt <<EOF
-set -e
-ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
-hwclock --systohc
-sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-sed -i 's/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/' /etc/locale.gen
-locale-gen
-echo "LANG=en_US.UTF-8" > /etc/locale.conf
-echo "KEYMAP=es" > /etc/vconsole.conf
-echo "ArchLinux" > /etc/hostname
+  arch-chroot /mnt bash -c '
+    set -e
+    ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
+    hwclock --systohc
+    sed -i "s/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
+    sed -i "s/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/" /etc/locale.gen
+    locale-gen
+    echo "LANG=en_US.UTF-8" > /etc/locale.conf
+    echo "KEYMAP=es" > /etc/vconsole.conf
+    echo "ArchLinux" > /etc/hostname
 
-sed -i 's/^HOOKS.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/' /etc/mkinitcpio.conf
-mkinitcpio -P linux-zen
+    sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/" /etc/mkinitcpio.conf
+    mkinitcpio -P linux-zen
 
-UUID_ROOT=\$(blkid -s UUID -o value /dev/sda2)
-UUID_MAPPER=\$(blkid -s UUID -o value /dev/mapper/vol-root)
+    UUID_ROOT=$(blkid -s UUID -o value /dev/sda2)
+    UUID_MAPPER=$(blkid -s UUID -o value /dev/mapper/vol-root)
 
-sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$UUID_ROOT:cryptroot root=UUID=\$UUID_MAPPER\"|" /etc/default/grub
+    # Habilitar cryptodisk en grub
+    if ! grep -q "^GRUB_ENABLE_CRYPTODISK=y" /etc/default/grub; then
+      echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
+    fi
 
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
-grub-mkconfig -o /boot/grub/grub.cfg
+    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER\"|" /etc/default/grub
 
-systemctl enable NetworkManager
-EOF
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
+    grub-mkconfig -o /boot/grub/grub.cfg
+
+    systemctl enable NetworkManager
+  '
 
   pausa
 }
