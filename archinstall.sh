@@ -176,41 +176,42 @@ function fase_hardening_gui() {
       pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges && break
       echo "❗ Error instalando paquetes. Reintentando ($try/3)..."
       sleep 2
-    done 1; fi
+      if [[ $try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
+    done
 
     systemctl enable --now lightdm
     systemctl enable ufw
     ufw enable
 
     echo "blacklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
-    modprobe -r pcspkrcklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
+    modprobe -r pcspkr
 
     cat > /etc/systemd/system/clear-cache.service <<SERV
-[Unit]    cat > /etc/systemd/system/clear-cache.service <<SERV
+[Unit]
 Description=Clear Cache at Shutdown
-DefaultDependencies=noat Shutdown
-Before=shutdown.targetncies=no
+DefaultDependencies=no
 Before=shutdown.target
+
 [Service]
 Type=oneshot
-ExecStart=/bin/syncType=oneshot
+ExecStart=/bin/sync
 ExecStart=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
-art=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
+
 [Install]
 WantedBy=shutdown.target
-SERVet
 SERV
+
     systemctl enable clear-cache.service
-  'l enable clear-cache.service
+  '
   pausa
 }
-}
+
 #### 🧩 EJECUCIÓN FINAL ####
-header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"####
-fase_preinstaller "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
-fase_particiones_cifradofase_preinstall
+header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
+fase_preinstall
+fase_particiones_cifrado
 fase_montaje_sistema
-fase_post_installe_montaje_sistema
-fase_hardening_guist_install
-ase_hardening_gui
+fase_post_install
+fase_hardening_gui
+
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
