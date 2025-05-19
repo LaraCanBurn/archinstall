@@ -184,7 +184,7 @@ function fase_hardening_gui() {
       if [[ $try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
     done
 
-    systemctl enable --now lightdm
+    systemctl enable lightdm
     systemctl enable ufw
     ufw enable
 
