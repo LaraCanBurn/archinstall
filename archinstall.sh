@@ -2,6 +2,25 @@
 
 set -e
 
+# Función para reintentar comandos hasta N veces
+function retry() {
+  local n=1
+  local max=3
+  local delay=2
+  while true; do
+    "$@" && break || {
+      if [[ $n -lt $max ]]; then
+        ((n++))
+        echo "❗ Error al ejecutar '$*'. Reintentando intento $n/$max en $delay segundos..."
+        sleep $delay;
+      else
+        echo "❌ Error persistente tras $max intentos. Abortando..."
+        exit 1
+      fi
+    }
+  done
+}
+
 function pausa() {
   read -p "✅ Fase completada. Presiona Enter para continuar con la siguiente..."
 }
@@ -12,7 +31,7 @@ function fase_preinstall() {
   echo "➡ Verificar UEFI:"
   ls /sys/firmware/efi/efivars || { echo "❌ UEFI NO detectado. Abortando..."; exit 1; }
   echo "➡ Validar conexión:"
-  ping -c 1 archlinux.org
+  retry ping -c 1 archlinux.org
   pausa
 }
 
@@ -21,8 +40,11 @@ function fase_particiones_cifrado() {
   echo "➡ Crear particiones EFI y Root..."
   cfdisk /dev/sda
   mkfs.vfat -F32 /dev/sda1
-  cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
-  cryptsetup open /dev/sda2 crypt-root
+
+  # Reintento para contraseña de cifrado
+  retry cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
+  retry cryptsetup open /dev/sda2 crypt-root
+
   pvcreate /dev/mapper/crypt-root
   vgcreate vol /dev/mapper/crypt-root
   lvcreate -n swap -L 8G vol
@@ -33,26 +55,26 @@ function fase_particiones_cifrado() {
   echo "➡ Crear particiones ZFS en sdb y sdc..."
   cfdisk /dev/sdb
   cfdisk /dev/sdc
-  cryptsetup luksFormat --type luks2 /dev/sdb
-  cryptsetup luksFormat --type luks2 /dev/sdc
-  cryptsetup open /dev/sdb crypt-zfs1
-  cryptsetup open /dev/sdc crypt-zfs2
+  retry cryptsetup luksFormat --type luks2 /dev/sdb
+  retry cryptsetup luksFormat --type luks2 /dev/sdc
+  retry cryptsetup open /dev/sdb crypt-zfs1
+  retry cryptsetup open /dev/sdc crypt-zfs2
 
   mkdir -p /mnt/etc/luks-keys
   openssl rand -base64 64 > /mnt/etc/luks-keys/root.key
   openssl rand -base64 64 > /mnt/etc/luks-keys/sdb.key
   openssl rand -base64 64 > /mnt/etc/luks-keys/sdc.key
 
-  cryptsetup luksAddKey /dev/sda2 /mnt/etc/luks-keys/root.key
-  cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
-  cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
+  retry cryptsetup luksAddKey /dev/sda2 /mnt/etc/luks-keys/root.key
+  retry cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
+  retry cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
 
   pausa
 }
 
 function fase_zfs() {
   echo "🔹 FASE 3 - CONFIGURACIÓN ZFS"
-  pacman -Sy --noconfirm zfs-dkms zfs-utils
+  retry pacman -Sy --noconfirm zfs-dkms zfs-utils
   zpool create -f -o ashift=12 raidz raidz /dev/mapper/crypt-zfs1 /dev/mapper/crypt-zfs2
   zfs create raidz/root
   zfs create raidz/data
@@ -71,7 +93,7 @@ function fase_montaje_sistema() {
   zfs mount raidz/data /mnt/data
 
   reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
-  pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup
+  retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup
   genfstab -U /mnt > /mnt/etc/fstab
 
   pausa
@@ -80,6 +102,8 @@ function fase_montaje_sistema() {
 function fase_post_install() {
   echo "🔹 FASE 5 - POST-INSTALL (CHROOT)"
   arch-chroot /mnt <<EOF
+set -e
+
 ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
 hwclock --systohc
 sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
@@ -109,12 +133,15 @@ EOF
 function fase_hardening_gui() {
   echo "🔹 FASE 6 - HARDENING, GUI Y PERSONALIZACIÓN"
   arch-chroot /mnt <<EOF
-passwd
+set -e
+
+# Reintento para contraseñas de usuario root y nuevo usuario
+until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
 useradd -m -G wheel -s /bin/bash LaraCanBurn
-passwd LaraCanBurn
+until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
 EDITOR=nano visudo
 
-pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges
+retry pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges
 
 systemctl enable --now lightdm
 systemctl enable ufw
