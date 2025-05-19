@@ -1,8 +1,15 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-# Función para reintentar comandos hasta N veces
+# 🎨 Colores con estilo
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+CYAN='\033[36m'
+RESET='\033[0m'
+
+# 🔁 Función para reintentos de comandos
 function retry() {
   local n=1
   local max=3
@@ -11,50 +18,59 @@ function retry() {
     "$@" && break || {
       if [[ $n -lt $max ]]; then
         ((n++))
-        echo "❗ Error al ejecutar '$*'. Reintentando intento $n/$max en $delay segundos..."
-        sleep $delay;
+        echo -e "${YELLOW}❗ Error ejecutando '$*'. Reintento $n/$max en $delay s...${RESET}"
+        sleep $delay
       else
-        echo "❌ Error persistente tras $max intentos. Abortando..."
+        echo -e "${RED}❌ Error persistente tras $max intentos. Abortando...${RESET}"
         exit 1
       fi
     }
   done
 }
 
-function pausa() {
-  read -p "✅ Fase completada. Presiona Enter para continuar con la siguiente..."
+# 🕹️ Utilidad visual
+function header() {
+  echo -e "${CYAN}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "🛡️  ${1}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "${RESET}"
 }
 
+function pausa() {
+  echo -e "${YELLOW}✅ Fase completada. Pulsa Enter para continuar...${RESET}"
+  read
+}
+
+# 🔹 Fase 1 - Preinstall
 function fase_preinstall() {
-  echo "🔹 FASE 1 - PRE-INSTALL Y RED"
+  header "FASE 1 - PRE-INSTALL Y RED"
   loadkeys es
-  echo "➡ Verificar UEFI:"
-  ls /sys/firmware/efi/efivars || { echo "❌ UEFI NO detectado. Abortando..."; exit 1; }
-  echo "➡ Validar conexión:"
+  echo -e "${GREEN}➡ Verificando UEFI...${RESET}"
+  ls /sys/firmware/efi/efivars || { echo -e "${RED}❌ UEFI NO detectado. Abortando...${RESET}"; exit 1; }
+  echo -e "${GREEN}➡ Verificando conexión...${RESET}"
   retry ping -c 1 archlinux.org
   pausa
 }
 
+# 🔹 Fase 2 - Particiones y cifrado
 function fase_particiones_cifrado() {
-  echo "🔹 FASE 2 - PARTICIONES Y CIFRADO"
-  echo "➡ Crear particiones EFI y Root..."
-  cfdisk /dev/sda
-  mkfs.vfat -F32 /dev/sda1
+  header "FASE 2 - PARTICIONES Y CIFRADO"
+  retry cfdisk /dev/sda
+  retry mkfs.vfat -F32 /dev/sda1
 
-  # Reintento para contraseña de cifrado
   retry cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
   retry cryptsetup open /dev/sda2 crypt-root
 
-  pvcreate /dev/mapper/crypt-root
-  vgcreate vol /dev/mapper/crypt-root
-  lvcreate -n swap -L 8G vol
-  lvcreate -l +100%FREE vol -n root
-  mkswap /dev/mapper/vol-swap
-  mkfs.ext4 /dev/mapper/vol-root
+  retry pvcreate /dev/mapper/crypt-root
+  retry vgcreate vol /dev/mapper/crypt-root
+  retry lvcreate -n swap -L 8G vol
+  retry lvcreate -l +100%FREE vol -n root
+  retry mkswap /dev/mapper/vol-swap
+  retry mkfs.ext4 /dev/mapper/vol-root
 
-  echo "➡ Crear particiones ZFS en sdb y sdc..."
-  cfdisk /dev/sdb
-  cfdisk /dev/sdc
+  retry cfdisk /dev/sdb
+  retry cfdisk /dev/sdc
   retry cryptsetup luksFormat --type luks2 /dev/sdb
   retry cryptsetup luksFormat --type luks2 /dev/sdc
   retry cryptsetup open /dev/sdb crypt-zfs1
@@ -72,38 +88,60 @@ function fase_particiones_cifrado() {
   pausa
 }
 
-function fase_zfs() {
-  echo "🔹 FASE 3 - CONFIGURACIÓN ZFS"
-  retry pacman -Sy --noconfirm zfs-dkms zfs-utils
-  zpool create -f -o ashift=12 raidz raidz /dev/mapper/crypt-zfs1 /dev/mapper/crypt-zfs2
-  zfs create raidz/root
-  zfs create raidz/data
-  zfs set compression=lz4 raidz
-  zfs set atime=off raidz
-  pausa
+# 🔧 Instalación de ZFS (post-pacstrap)
+function instalar_zfs_autodetect() {
+  KERNEL=${1:-"linux"}
+  echo -e "${CYAN}🔍 Kernel seleccionado: $KERNEL${RESET}"
+
+  case "$KERNEL" in
+    linux) ZFS_PKG="zfs-linux" ;;
+    linux-zen) ZFS_PKG="zfs-linux-zen" ;;
+    linux-lts) ZFS_PKG="zfs-linux-lts" ;;
+    *) echo -e "${YELLOW}⚠️ Kernel no estándar. Se usará zfs-dkms${RESET}"; ZFS_PKG="zfs-dkms" ;;
+  esac
+
+  if ! grep -q "\[archzfs\]" /etc/pacman.conf; then
+    echo -e "\n[archzfs]\nServer = https://archzfs.com/\$repo/x86_64" >> /etc/pacman.conf
+    pacman-key --recv-keys F75D9D76 --keyserver keyserver.ubuntu.com
+    pacman-key --lsign-key F75D9D76
+    pacman -Sy
+  fi
+
+  echo -e "${CYAN}📦 Instalando $ZFS_PKG...${RESET}"
+  pacman -S --noconfirm $ZFS_PKG zfs-utils || {
+    echo -e "${YELLOW}⚠️ Fallback a AUR...${RESET}"
+    if command -v paru &>/dev/null; then
+      paru -S --noconfirm zfs-dkms zfs-utils
+    elif command -v yay &>/dev/null; then
+      yay -S --noconfirm zfs-dkms zfs-utils
+    else
+      echo -e "${RED}❌ No se encontró yay/paru.${RESET}"
+      exit 1
+    fi
+  }
+  echo -e "${GREEN}✅ ZFS instalado correctamente.${RESET}"
 }
 
 function fase_montaje_sistema() {
-  echo "🔹 FASE 4 - MONTAJE Y SISTEMA BASE"
-  mount /dev/mapper/vol-root /mnt
-  swapon /dev/mapper/vol-swap
+  header "FASE 3 - MONTAJE Y SISTEMA BASE"
+  retry mount /dev/mapper/vol-root /mnt
+  retry swapon /dev/mapper/vol-swap
   mkdir -p /mnt/boot/efi
-  mount /dev/sda1 /mnt/boot/efi
-  mkdir -p /mnt/data
-  zfs mount raidz/data /mnt/data
+  retry mount /dev/sda1 /mnt/boot/efi
 
-  reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
+  retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
+
   retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup
   genfstab -U /mnt > /mnt/etc/fstab
-
   pausa
 }
 
 function fase_post_install() {
-  echo "🔹 FASE 5 - POST-INSTALL (CHROOT)"
+  header "FASE 4 - POST-INSTALL (CHROOT + ZFS)"
+  arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect linux-zen"
+
   arch-chroot /mnt <<EOF
 set -e
-
 ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
 hwclock --systohc
 sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
@@ -131,26 +169,32 @@ EOF
 }
 
 function fase_hardening_gui() {
-  echo "🔹 FASE 6 - HARDENING, GUI Y PERSONALIZACIÓN"
-  arch-chroot /mnt <<EOF
-set -e
+  header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
+  arch-chroot /mnt bash -c '
+    set -e
+    # Contraseña root con reintentos
+    until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
+    # Usuario admin
+    useradd -m -G wheel -s /bin/bash LaraCanBurn
+    until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
+    EDITOR=nano visudo
 
-# Reintento para contraseñas de usuario root y nuevo usuario
-until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
-useradd -m -G wheel -s /bin/bash LaraCanBurn
-until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
-EDITOR=nano visudo
+    # Instalación de entorno gráfico y utilidades
+    for try in {1..3}; do
+      pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges && break
+      echo "❗ Error instalando paquetes. Reintentando ($try/3)..."
+      sleep 2
+      if [[ $try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
+    done
 
-retry pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar neofetch git vim docker kubernetes-cli python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges
+    systemctl enable --now lightdm
+    systemctl enable ufw
+    ufw enable
 
-systemctl enable --now lightdm
-systemctl enable ufw
-ufw enable
+    echo "blacklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
+    modprobe -r pcspkr
 
-echo "blacklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
-modprobe -r pcspkr
-
-cat > /etc/systemd/system/clear-cache.service <<SERV
+    cat > /etc/systemd/system/clear-cache.service <<SERV
 [Unit]
 Description=Clear Cache at Shutdown
 DefaultDependencies=no
@@ -165,18 +209,17 @@ ExecStart=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
 WantedBy=shutdown.target
 SERV
 
-systemctl enable clear-cache.service
-EOF
-
+    systemctl enable clear-cache.service
+  '
   pausa
 }
 
-## EJECUCIÓN GUIADA ##
+#### 🧩 EJECUCIÓN FINAL ####
+header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
 fase_preinstall
 fase_particiones_cifrado
-fase_zfs
 fase_montaje_sistema
 fase_post_install
 fase_hardening_gui
 
-echo "🎉 Instalación COMPLETADA con seguridad, cifrado, RAID ZFS, GUI y hardening aplicados."
+echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
