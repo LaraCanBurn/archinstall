@@ -59,6 +59,9 @@ function fase_particiones_cifrado() {
   # IMPORTANTE: La contraseña que introduzcas aquí para /dev/sda2 será la que deberás usar al arrancar el sistema (GRUB la pedirá).
   # ATENCIÓN: El layout del teclado en GRUB suele ser US (inglés), aunque hayas usado 'es' en el instalador.
   # Si tu contraseña contiene caracteres especiales o letras en posiciones distintas en teclado US/ES, toma nota de cómo escribirla en teclado US.
+  # NOTA: La contraseña original de /dev/sda2 NO se sobrescribe en ningún momento. Las claves de archivo añadidas con luksAddKey solo permiten desbloqueo automático desde el sistema, pero GRUB solo acepta la contraseña manual original.
+  # Si no puedes desbloquear, asegúrate de estar usando la contraseña original de /dev/sda2 y revisa el layout del teclado.
+  # Las contraseñas de sdb y sdc no sirven para desbloquear la raíz, solo para esos discos.
   retry cfdisk /dev/sda
   retry mkfs.vfat -F32 /dev/sda1
 
