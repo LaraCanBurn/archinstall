@@ -207,10 +207,14 @@ ExecStart=/bin/sync
 ExecStart=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
 
 [Install]
+WantedBy=shutdown.target
+SERV
+
+    systemctl enable clear-cache.service
   '
+
   pausa
 }
-tedBy=shutdown.target
 #### 🧩 EJECUCIÓN FINAL ####
 header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
 fase_preinstall    systemctl enable clear-cache.service
@@ -219,7 +223,4 @@ fase_montaje_sistema
 fase_post_install
 fase_hardening_gui
 NAL ####
-echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}" DE INSTALACIÓN ARCH ZFS (fusionado)"
-fase_hardening_gui
-
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
