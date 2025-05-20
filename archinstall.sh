@@ -57,11 +57,14 @@ function fase_preinstall() {
 function fase_particiones_cifrado() {
   header "FASE 2 - PARTICIONES Y CIFRADO"
   # IMPORTANTE: La contraseña que introduzcas aquí para /dev/sda2 será la que deberás usar al arrancar el sistema (GRUB la pedirá).
+  # ATENCIÓN: El layout del teclado en GRUB suele ser US (inglés), aunque hayas usado 'es' en el instalador.
+  # Si tu contraseña contiene caracteres especiales o letras en posiciones distintas en teclado US/ES, toma nota de cómo escribirla en teclado US.
   retry cfdisk /dev/sda
   retry mkfs.vfat -F32 /dev/sda1
 
   # Aquí se te pedirá que introduzcas una contraseña para el cifrado de /dev/sda2.
   # GUARDA esa contraseña, ya que será necesaria cada vez que arranques el sistema.
+  # Si tienes dudas, usa una contraseña sencilla (solo letras/números) para evitar problemas de layout.
   retry cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
   retry cryptsetup open /dev/sda2 crypt-root
 
@@ -157,7 +160,21 @@ function fase_post_install() {
       echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
     fi
 
-    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER\"|" /etc/default/grub
+    # Configurar teclado español en GRUB
+    grub-mkfont -o /boot/grub/unicode.pf2 -s 16 /usr/share/fonts/gnu-free/FreeMono.ttf
+    grub-kbdcomp -o /boot/grub/es.gkb es
+    if ! grep -q "GRUB_TERMINAL_INPUT=at_keyboard" /etc/default/grub; then
+      echo "GRUB_TERMINAL_INPUT=at_keyboard" >> /etc/default/grub
+    fi
+    if ! grep -q "GRUB_PRELOAD_MODULES=\"keylayouts\"" /etc/default/grub; then
+      echo "GRUB_PRELOAD_MODULES=\"keylayouts\"" >> /etc/default/grub
+    fi
+    if ! grep -q "GRUB_KEYBOARD_LAYOUT=\"es\"" /etc/default/grub; then
+      echo "GRUB_KEYBOARD_LAYOUT=\"es\"" >> /etc/default/grub
+    fi
+
+    sed -i "/^GRUB_CMDLINE_LINUX=/d" /etc/default/grub
+    echo "GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER\"" >> /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
     grub-mkconfig -o /boot/grub/grub.cfg
