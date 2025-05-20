@@ -191,8 +191,9 @@ function fase_hardening_gui() {
     systemctl enable ufw
     ufw enable
 
-    echo "blacklist pcspkr" > /etc/modprobe.d/blacklist-pcspkr.conf
-    modprobe -r pcspkr
+    # Habilitar altavoz del sistema (pcspkr)
+    echo "pcspkr" > /etc/modules-load.d/pcspkr.conf
+    modprobe pcspkr || true
 
     cat > /etc/systemd/system/clear-cache.service <<SERV
 [Unit]
@@ -206,20 +207,19 @@ ExecStart=/bin/sync
 ExecStart=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
 
 [Install]
-WantedBy=shutdown.target
-SERV
-
-    systemctl enable clear-cache.service
   '
   pausa
 }
-
+tedBy=shutdown.target
 #### 🧩 EJECUCIÓN FINAL ####
 header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
-fase_preinstall
+fase_preinstall    systemctl enable clear-cache.service
 fase_particiones_cifrado
 fase_montaje_sistema
 fase_post_install
+fase_hardening_gui
+NAL ####
+echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}" DE INSTALACIÓN ARCH ZFS (fusionado)"
 fase_hardening_gui
 
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
