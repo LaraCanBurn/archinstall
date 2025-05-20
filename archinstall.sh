@@ -217,10 +217,18 @@ SERV
 }
 #### 🧩 EJECUCIÓN FINAL ####
 header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
-fase_preinstall    systemctl enable clear-cache.service
+fase_preinstall
 fase_particiones_cifrado
 fase_montaje_sistema
 fase_post_install
 fase_hardening_gui
-NAL ####
+
+# Desmontar particiones y reiniciar el sistema
+header "🔄 Desmontando particiones y reiniciando el sistema"
+swapoff -a || true
+umount -R /mnt || true
+
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
+echo -e "${YELLOW}El sistema se reiniciará en 5 segundos...${RESET}"
+sleep 5
+reboot
