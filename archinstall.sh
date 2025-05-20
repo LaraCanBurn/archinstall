@@ -56,9 +56,12 @@ function fase_preinstall() {
 # 🔹 Fase 2 - Particiones y cifrado
 function fase_particiones_cifrado() {
   header "FASE 2 - PARTICIONES Y CIFRADO"
+  # IMPORTANTE: La contraseña que introduzcas aquí para /dev/sda2 será la que deberás usar al arrancar el sistema (GRUB la pedirá).
   retry cfdisk /dev/sda
   retry mkfs.vfat -F32 /dev/sda1
 
+  # Aquí se te pedirá que introduzcas una contraseña para el cifrado de /dev/sda2.
+  # GUARDA esa contraseña, ya que será necesaria cada vez que arranques el sistema.
   retry cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
   retry cryptsetup open /dev/sda2 crypt-root
 
@@ -225,7 +228,7 @@ fase_hardening_gui
 
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
-swapoff -a || true
+# swapoff -a || true
 umount -R /mnt || true
 
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
