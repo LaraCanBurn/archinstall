@@ -62,7 +62,7 @@ function fase_particiones_cifrado() {
 
   # Aquí se te pedirá que introduzcas una contraseña para el cifrado de /dev/sda2.
   # GUARDA esa contraseña, ya que será necesaria cada vez que arranques el sistema.
-  retry cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --hash sha512 --iter-time 5000 --pbkdf argon2id /dev/sda2
+  retry cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64 --key-size 512 --iter-time 5000 /dev/sda2
   retry cryptsetup open /dev/sda2 crypt-root
 
   retry pvcreate /dev/mapper/crypt-root
