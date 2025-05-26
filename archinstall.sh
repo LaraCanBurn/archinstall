@@ -150,6 +150,23 @@ function fase_montaje_sistema() {
     exit 1
   fi
   echo -e "${GREEN}fstab contiene la raíz correctamente.${RESET}"
+
+  # --- Verificación de instalación base, kernel e initramfs ---
+  echo -e "${CYAN}🔎 Comprobando instalación base y archivos críticos...${RESET}"
+  if [[ ! -x /mnt/bin/bash ]]; then
+    echo -e "${RED}❌ /mnt/bin/bash no existe. La instalación base ha fallado. Abortando...${RESET}"
+    exit 1
+  fi
+  if [[ ! -f /mnt/boot/vmlinuz-linux-zen ]]; then
+    echo -e "${RED}❌ /mnt/boot/vmlinuz-linux-zen no existe. El kernel no se ha instalado. Abortando...${RESET}"
+    exit 1
+  fi
+  if [[ ! -f /mnt/boot/initramfs-linux-zen.img ]]; then
+    echo -e "${RED}❌ /mnt/boot/initramfs-linux-zen.img no existe. El initramfs no se ha generado. Abortando...${RESET}"
+    exit 1
+  fi
+  echo -e "${GREEN}Sistema base, kernel e initramfs detectados correctamente.${RESET}"
+
   # --- Fin comprobaciones ---
 
   pausa
