@@ -128,6 +128,30 @@ function fase_montaje_sistema() {
 
   retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup
   genfstab -U /mnt > /mnt/etc/fstab
+
+  # --- Comprobaciones adicionales ---
+  echo -e "${CYAN}🔎 Comprobando mapeo LUKS y UUIDs...${RESET}"
+  if ! ls /dev/mapper/crypt-root &>/dev/null; then
+    echo -e "${RED}❌ El mapeo /dev/mapper/crypt-root no existe. Abortando...${RESET}"
+    exit 1
+  fi
+  UUID_SDA2=$(blkid -s UUID -o value /dev/sda2)
+  UUID_MAPPER=$(blkid -s UUID -o value /dev/mapper/vol-root)
+  if [[ -z "$UUID_SDA2" || -z "$UUID_MAPPER" ]]; then
+    echo -e "${RED}❌ No se pudo obtener el UUID de /dev/sda2 o /dev/mapper/vol-root. Abortando...${RESET}"
+    exit 1
+  fi
+  echo -e "${GREEN}UUID de /dev/sda2: $UUID_SDA2${RESET}"
+  echo -e "${GREEN}UUID de /dev/mapper/vol-root: $UUID_MAPPER${RESET}"
+
+  echo -e "${CYAN}🔎 Comprobando fstab...${RESET}"
+  if ! grep -q "$UUID_MAPPER" /mnt/etc/fstab; then
+    echo -e "${RED}❌ El UUID de la raíz no está en /mnt/etc/fstab. Abortando...${RESET}"
+    exit 1
+  fi
+  echo -e "${GREEN}fstab contiene la raíz correctamente.${RESET}"
+  # --- Fin comprobaciones ---
+
   pausa
 }
 
