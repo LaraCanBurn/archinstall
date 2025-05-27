@@ -126,7 +126,27 @@ function fase_montaje_sistema() {
 
   retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
 
-  retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup
+  # --- Comprobación de microcode ---
+  echo -e "${CYAN}🔎 Comprobando microcode...${RESET}"
+  CPU_VENDOR=$(lscpu | grep -i 'vendor' | awk '{print $3}' | head -n1)
+  if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
+    if ! pacman -Qq intel-ucode &>/dev/null; then
+      echo -e "${YELLOW}⚠️  Instalando intel-ucode...${RESET}"
+      pacman -Sy --noconfirm intel-ucode
+    fi
+    MICROCODE="intel-ucode.img"
+  elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
+    if ! pacman -Qq amd-ucode &>/dev/null; then
+      echo -e "${YELLOW}⚠️  Instalando amd-ucode...${RESET}"
+      pacman -Sy --noconfirm amd-ucode
+    fi
+    MICROCODE="amd-ucode.img"
+  else
+    MICROCODE=""
+  fi
+
+  retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")
+
   genfstab -U /mnt > /mnt/etc/fstab
 
   # --- Comprobaciones adicionales ---
@@ -165,9 +185,24 @@ function fase_montaje_sistema() {
     echo -e "${RED}❌ /mnt/boot/initramfs-linux-zen.img no existe. El initramfs no se ha generado. Abortando...${RESET}"
     exit 1
   fi
-  echo -e "${GREEN}Sistema base, kernel e initramfs detectados correctamente.${RESET}"
+  if [[ -n "$MICROCODE" && ! -f /mnt/boot/$MICROCODE ]]; then
+    echo -e "${RED}❌ /mnt/boot/$MICROCODE no existe. El microcode no se ha instalado. Abortando...${RESET}"
+    exit 1
+  fi
+  echo -e "${GREEN}Sistema base, kernel, initramfs y microcode detectados correctamente.${RESET}"
 
-  # --- Fin comprobaciones ---
+  # --- Comprobación de consola ---
+  echo -e "${CYAN}🔎 Comprobando existencia de consola...${RESET}"
+  if [[ ! -c /mnt/dev/console ]]; then
+    echo -e "${YELLOW}⚠️  /mnt/dev/console no existe. Creando...${RESET}"
+    arch-chroot /mnt mknod -m 600 /dev/console c 5 1
+  fi
+
+  # --- Comprobación de crypttab ---
+  if [[ -f /mnt/etc/crypttab ]]; then
+    echo -e "${YELLOW}⚠️  /mnt/etc/crypttab existe. Su contenido es:${RESET}"
+    cat /mnt/etc/crypttab
+  fi
 
   pausa
 }
@@ -198,7 +233,8 @@ function fase_post_install() {
       echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
     fi
 
-    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER\"|" /etc/default/grub
+    # Forzar arranque en modo texto y consola
+    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1\"|" /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
     grub-mkconfig -o /boot/grub/grub.cfg
