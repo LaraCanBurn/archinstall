@@ -195,7 +195,9 @@ function fase_montaje_sistema() {
   echo -e "${CYAN}🔎 Comprobando existencia de consola...${RESET}"
   if [[ ! -c /mnt/dev/console ]]; then
     echo -e "${YELLOW}⚠️  /mnt/dev/console no existe. Creando...${RESET}"
-    arch-chroot /mnt mknod -m 600 /dev/console c 5 1
+    arch-chroot /mnt mknod -m 600 /dev/console c 5 1 || true
+  else
+    echo -e "${GREEN}/mnt/dev/console ya existe.${RESET}"
   fi
 
   # --- Comprobación de crypttab ---
