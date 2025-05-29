@@ -235,11 +235,14 @@ function fase_post_install() {
       echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
     fi
 
-    # Forzar arranque en modo texto y consola
-    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1\"|" /etc/default/grub
+    # Forzar arranque en modo texto y consola, y deshabilitar drivers gráficos automáticos
+    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1 nomodeset\"|" /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
     grub-mkconfig -o /boot/grub/grub.cfg
+
+    # Regenerar initramfs tras cambios en HOOKS
+    mkinitcpio -P linux-zen
 
     systemctl enable NetworkManager
   '
@@ -257,6 +260,9 @@ function fase_hardening_gui() {
     useradd -m -G wheel -s /bin/bash LaraCanBurn
     until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
     EDITOR=nano visudo
+
+    # Deshabilitar lightdm para pruebas de login en consola
+    systemctl disable lightdm
 
     # Instalación de entorno gráfico y utilidades
     for try in {1..3}; do
