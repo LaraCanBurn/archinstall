@@ -235,8 +235,11 @@ function fase_post_install() {
       echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
     fi
 
-    # Forzar arranque en modo texto y consola, y deshabilitar drivers gráficos automáticos
-    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1 nomodeset\"|" /etc/default/grub
+    # Habilitar getty en tty1 para asegurar login en consola
+    systemctl enable getty@tty1.service
+
+    # Forzar arranque en modo texto y consola (sin nomodeset para probar)
+    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1\"|" /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
     grub-mkconfig -o /boot/grub/grub.cfg
