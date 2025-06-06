@@ -224,7 +224,9 @@ function fase_post_install() {
     echo "KEYMAP=es" > /etc/vconsole.conf
     echo "ArchLinux" > /etc/hostname
 
-    sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/" /etc/mkinitcpio.conf
+    # Asegura que el hook keyboard esté presente antes de filesystems
+    sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/" /etc/mkinitcpio.conf
+
     mkinitcpio -P linux-zen
 
     UUID_ROOT=$(blkid -s UUID -o value /dev/sda2)
@@ -260,20 +262,24 @@ function fase_hardening_gui() {
     # Contraseña root con reintentos
     until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
     # Usuario admin
-    useradd -m -G wheel -s /bin/bash LaraCanBurn
+    useradd -m -G wheel,audio -s /bin/bash LaraCanBurn
     until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
     EDITOR=nano visudo
 
     # Deshabilitar lightdm para pruebas de login en consola
     systemctl disable lightdm
 
-    # Instalación de entorno gráfico, drivers y utilidades
+    # Instalación de entorno gráfico, drivers, utilidades y audio
     for try in {1..3}; do
-      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges && break
+      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pavucontrol && break
       echo "❗ Error instalando paquetes. Reintentando (\$try/3)..."
       sleep 2
       if [[ \$try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
     done
+
+    # Habilitar y arrancar PulseAudio (solo para sistemas no PipeWire)
+    systemctl --user enable pulseaudio || true
+    systemctl --user start pulseaudio || true
 
     # Deshabilitar IPv6 en UFW para evitar errores si el módulo no está disponible
     sed -i "s/^IPV6=.*/IPV6=no/" /etc/default/ufw
