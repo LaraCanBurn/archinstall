@@ -193,9 +193,9 @@ function fase_montaje_sistema() {
 
   # --- Comprobación de consola ---
   echo -e "${CYAN}🔎 Comprobando existencia de consola...${RESET}"
-  if [[ ! -c /mnt/dev/console ]]; then
+  if arch-chroot /mnt test ! -c /dev/console; then
     echo -e "${YELLOW}⚠️  /mnt/dev/console no existe. Creando...${RESET}"
-    arch-chroot /mnt mknod -m 600 /dev/console c 5 1 || true
+    arch-chroot /mnt mknod -m 600 /dev/console c 5 1
   else
     echo -e "${GREEN}/mnt/dev/console ya existe.${RESET}"
   fi
@@ -316,6 +316,11 @@ fase_hardening_gui
 
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
+
+# Activar y arrancar LightDM antes de reiniciar
+arch-chroot /mnt systemctl enable lightdm
+arch-chroot /mnt systemctl start lightdm
+
 # swapoff -a || true
 umount -R /mnt || true
 
