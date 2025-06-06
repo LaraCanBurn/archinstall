@@ -267,16 +267,16 @@ function fase_hardening_gui() {
     # Deshabilitar lightdm para pruebas de login en consola
     systemctl disable lightdm
 
-    # Instalación de entorno gráfico y utilidades
+    # Instalación de entorno gráfico, drivers y utilidades
     for try in {1..3}; do
-      pacman -S --noconfirm xfce4 xorg xorg-server lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges && break
-      echo "❗ Error instalando paquetes. Reintentando ($try/3)..."
+      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges && break
+      echo "❗ Error instalando paquetes. Reintentando (\$try/3)..."
       sleep 2
-      if [[ $try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
+      if [[ \$try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
     done
 
     # Deshabilitar IPv6 en UFW para evitar errores si el módulo no está disponible
-    sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw
+    sed -i "s/^IPV6=.*/IPV6=no/" /etc/default/ufw
 
     systemctl enable lightdm
     systemctl enable ufw
@@ -317,9 +317,8 @@ fase_hardening_gui
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
 
-# Activar y arrancar LightDM antes de reiniciar
+# Solo habilitar LightDM, no arrancarlo manualmente
 arch-chroot /mnt systemctl enable lightdm
-arch-chroot /mnt systemctl start lightdm
 
 # swapoff -a || true
 umount -R /mnt || true
