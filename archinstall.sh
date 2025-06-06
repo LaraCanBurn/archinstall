@@ -72,8 +72,10 @@ function fase_particiones_cifrado() {
   retry mkswap /dev/mapper/vol-swap
   retry mkfs.ext4 /dev/mapper/vol-root
 
-  retry cfdisk /dev/sdb
-  retry cfdisk /dev/sdc
+  # Permitir que cfdisk en sdb y sdc fallen sin abortar el script
+  cfdisk /dev/sdb || echo -e "${YELLOW}⚠️  cfdisk /dev/sdb falló, continuando...${RESET}"
+  cfdisk /dev/sdc || echo -e "${YELLOW}⚠️  cfdisk /dev/sdc falló, continuando...${RESET}"
+
   retry cryptsetup luksFormat --type luks2 /dev/sdb
   retry cryptsetup luksFormat --type luks2 /dev/sdc
   retry cryptsetup open /dev/sdb crypt-zfs1
