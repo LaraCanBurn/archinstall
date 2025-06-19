@@ -222,12 +222,12 @@ function fase_post_install() {
     sed -i "s/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
     sed -i "s/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/" /etc/locale.gen
     locale-gen
-    echo "LANG=en_US.UTF-8" > /etc/locale.conf
+    echo "LANG=es_ES.UTF-8" > /etc/locale.conf
     echo "KEYMAP=es" > /etc/vconsole.conf
     echo "ArchLinux" > /etc/hostname
 
     # Asegura que el hook keyboard esté presente antes de filesystems
-    sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/" /etc/mkinitcpio.conf
+    sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 keyboard filesystems fsck)/" /etc/mkinitcpio.conf
 
     mkinitcpio -P linux-zen
 
@@ -325,8 +325,13 @@ fase_hardening_gui
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
 
-# Solo habilitar LightDM, no arrancarlo manualmente
+# Habilitar y arrancar LightDM para que el entorno gráfico se inicie automáticamente tras el reinicio
 arch-chroot /mnt systemctl enable lightdm
+arch-chroot /mnt systemctl start lightdm
+
+# Habilitar y arrancar el sonido del sistema (PulseAudio)
+arch-chroot /mnt systemctl --global enable pulseaudio
+arch-chroot /mnt systemctl --global start pulseaudio
 
 # swapoff -a || true
 umount -R /mnt || true
