@@ -76,19 +76,28 @@ function fase_particiones_cifrado() {
   cfdisk /dev/sdb || echo -e "${YELLOW}⚠️  cfdisk /dev/sdb falló, continuando...${RESET}"
   cfdisk /dev/sdc || echo -e "${YELLOW}⚠️  cfdisk /dev/sdc falló, continuando...${RESET}"
 
-  retry cryptsetup luksFormat --type luks2 /dev/sdb
-  retry cryptsetup luksFormat --type luks2 /dev/sdc
-  retry cryptsetup open /dev/sdb crypt-zfs1
-  retry cryptsetup open /dev/sdc crypt-zfs2
+  # Solo ejecutar cryptsetup si el dispositivo existe
+  if [ -b /dev/sdb ]; then
+    retry cryptsetup luksFormat --type luks2 /dev/sdb
+    retry cryptsetup open /dev/sdb crypt-zfs1
+    openssl rand -base64 64 > /mnt/etc/luks-keys/sdb.key
+    retry cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
+  else
+    echo -e "${YELLOW}⚠️  /dev/sdb no existe, saltando cifrado y apertura de /dev/sdb...${RESET}"
+  fi
+
+  if [ -b /dev/sdc ]; then
+    retry cryptsetup luksFormat --type luks2 /dev/sdc
+    retry cryptsetup open /dev/sdc crypt-zfs2
+    openssl rand -base64 64 > /mnt/etc/luks-keys/sdc.key
+    retry cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
+  else
+    echo -e "${YELLOW}⚠️  /dev/sdc no existe, saltando cifrado y apertura de /dev/sdc...${RESET}"
+  fi
 
   mkdir -p /mnt/etc/luks-keys
   openssl rand -base64 64 > /mnt/etc/luks-keys/root.key
-  openssl rand -base64 64 > /mnt/etc/luks-keys/sdb.key
-  openssl rand -base64 64 > /mnt/etc/luks-keys/sdc.key
-
   retry cryptsetup luksAddKey /dev/sda2 /mnt/etc/luks-keys/root.key
-  retry cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
-  retry cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
 
   pausa
 }
