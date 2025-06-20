@@ -233,6 +233,8 @@ function fase_post_install() {
     locale-gen
     echo "LANG=es_ES.UTF-8" > /etc/locale.conf
     echo "KEYMAP=es" > /etc/vconsole.conf
+    # Agregado para configuración de VSCode
+    echo "{ \"files.defaultLanguage\": \"es\" }" >> /etc/vconsole.conf
     echo "ArchLinux" > /etc/hostname
 
     # Asegura que el hook keyboard esté presente antes de filesystems
