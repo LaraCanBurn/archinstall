@@ -78,6 +78,7 @@ function fase_particiones_cifrado() {
 
   # Solo ejecutar cryptsetup si el dispositivo existe
   if [ -b /dev/sdb ]; then
+    mkdir -p /mnt/etc/luks-keys  # <-- Asegura que el directorio exista antes de usarlo
     retry cryptsetup luksFormat --type luks2 /dev/sdb
     retry cryptsetup open /dev/sdb crypt-zfs1
     openssl rand -base64 64 > /mnt/etc/luks-keys/sdb.key
@@ -87,6 +88,7 @@ function fase_particiones_cifrado() {
   fi
 
   if [ -b /dev/sdc ]; then
+    mkdir -p /mnt/etc/luks-keys  # <-- Asegura que el directorio exista antes de usarlo
     retry cryptsetup luksFormat --type luks2 /dev/sdc
     retry cryptsetup open /dev/sdc crypt-zfs2
     openssl rand -base64 64 > /mnt/etc/luks-keys/sdc.key
@@ -95,7 +97,7 @@ function fase_particiones_cifrado() {
     echo -e "${YELLOW}⚠️  /dev/sdc no existe, saltando cifrado y apertura de /dev/sdc...${RESET}"
   fi
 
-  mkdir -p /mnt/etc/luks-keys
+  mkdir -p /mnt/etc/luks-keys  # <-- Esto puede quedarse para root.key, pero ya está creado arriba
   openssl rand -base64 64 > /mnt/etc/luks-keys/root.key
   retry cryptsetup luksAddKey /dev/sda2 /mnt/etc/luks-keys/root.key
 
