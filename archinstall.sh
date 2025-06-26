@@ -255,8 +255,8 @@ function fase_post_install() {
     # Habilitar getty en tty1 para asegurar login en consola
     systemctl enable getty@tty1.service
 
-    # Forzar arranque en modo texto y consola (sin nomodeset para probar)
-    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1\"|" /etc/default/grub
+    # Forzar arranque en modo texto y consola y teclado español
+    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1 vconsole.keymap=es\"|" /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
     grub-mkconfig -o /boot/grub/grub.cfg
@@ -282,7 +282,7 @@ function fase_hardening_gui() {
     EDITOR=nano visudo
 
     # Deshabilitar lightdm para pruebas de login en consola
-    systemctl disable lightdm
+    # systemctl disable lightdm   # <-- Elimina o comenta esta línea
 
     # Instalación de entorno gráfico, drivers, utilidades y audio
     for try in {1..3}; do
