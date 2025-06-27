@@ -297,13 +297,41 @@ function fase_hardening_gui() {
     # Deshabilitar lightdm para pruebas de login en consola
     # systemctl disable lightdm   # <-- Elimina o comenta esta línea
 
-    # Instalación de entorno gráfico, drivers, utilidades y audio
+    # Instalación de entorno gráfico, drivers, utilidades y audio, y open-vm-tools
     for try in {1..3}; do
-      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pavucontrol && break
+      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pavucontrol open-vm-tools open-vm-tools-desktop && break
       echo "❗ Error instalando paquetes. Reintentando (\$try/3)..."
       sleep 2
       if [[ \$try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
     done
+
+    # Habilitar servicios de VMware Tools
+    systemctl enable vmtoolsd
+    systemctl enable vmware-vmblock-fuse
+
+    # Autostart del redimensionado automático en XFCE (para usuario LaraCanBurn)
+    mkdir -p /home/LaraCanBurn/.config/autostart
+    cat > /home/LaraCanBurn/.config/autostart/vmware-user.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=VMware User Agent
+Exec=vmware-user-suid-wrapper
+X-GNOME-Autostart-enabled=true
+EOF
+    chown -R LaraCanBurn: /home/LaraCanBurn/.config
+
+    # Configuración básica de ALSA: volumen por defecto y sin mute
+    amixer sset Master unmute || true
+    amixer sset Master 80% || true
+    amixer sset PCM unmute || true
+    amixer sset PCM 80% || true
+
+    # Crear configuración persistente de ALSA
+    alsactl store
+
+    # Habilitar PulseAudio para todos los usuarios
+    systemctl --global enable pulseaudio
+    systemctl --global start pulseaudio
 
     # Habilitar y arrancar PulseAudio (solo para sistemas no PipeWire)
     systemctl --user enable pulseaudio || true
