@@ -287,6 +287,9 @@ function fase_hardening_gui() {
   header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
   arch-chroot /mnt bash -c '
     set -e
+    # Crear grupo realtime si no existe
+    getent group realtime || groupadd realtime
+
     # Contraseña root con reintentos
     until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
     # Usuario admin
