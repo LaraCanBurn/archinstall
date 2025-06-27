@@ -233,7 +233,7 @@ function fase_post_install() {
     sed -i "s/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
     sed -i "s/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/" /etc/locale.gen
     locale-gen
-    echo "LANG=es_ES.UTF-8" > /etc/locale.conf
+    echo "LANG=en_US.UTF-8" > /etc/locale.conf
     echo "KEYMAP=es" > /etc/vconsole.conf
     echo "ArchLinux" > /etc/hostname
 
@@ -267,8 +267,6 @@ EOF
     systemctl enable getty@tty1.service
 
     # Forzar arranque en modo texto y consola y teclado español
-    # sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER systemd.unit=multi-user.target console=tty1 vconsole.keymap=es\"|" /etc/default/grub
-    # Cambia la línea anterior por la siguiente:
     sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER console=tty1 vconsole.keymap=es\"|" /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
@@ -402,5 +400,7 @@ sleep 5
 reboot
 reboot
 sleep 5
+reboot
+reboot
 reboot
 reboot
