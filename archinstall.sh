@@ -349,9 +349,11 @@ fase_hardening_gui
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
 
-# Habilitar y arrancar LightDM para que el entorno gráfico se inicie automáticamente tras el reinicio
+# Habilitar LightDM para que el entorno gráfico se inicie automáticamente tras el reinicio
 arch-chroot /mnt systemctl enable lightdm
-arch-chroot /mnt systemctl start lightdm
+
+# Establecer graphical.target como objetivo por defecto
+arch-chroot /mnt systemctl set-default graphical.target
 
 # Habilitar y arrancar el sonido del sistema (PulseAudio)
 arch-chroot /mnt systemctl --global enable pulseaudio
@@ -365,4 +367,5 @@ echo -e "${YELLOW}El sistema se reiniciará en 5 segundos...${RESET}"
 sleep 5
 reboot
 sleep 5
+reboot
 reboot
