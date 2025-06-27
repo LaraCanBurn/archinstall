@@ -290,13 +290,13 @@ function fase_hardening_gui() {
     # Contraseña root con reintentos
     until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
     # Usuario admin
-    useradd -m -G wheel,audio -s /bin/bash LaraCanBurn
+    useradd -m -G wheel,audio,realtime -s /bin/bash LaraCanBurn
     until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
     EDITOR=nano visudo
 
     # Instalación de entorno gráfico, drivers, utilidades y audio, y open-vm-tools
     for try in $(seq 1 3); do
-      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa xf86-input-vmmouse lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pavucontrol open-vm-tools && break
+      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa xf86-input-vmmouse lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pulseaudio-alsa pavucontrol open-vm-tools && break
       echo "❗ Error instalando paquetes. Reintentando (\$try/3)..."
       sleep 2
       if [[ \$try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
@@ -326,13 +326,13 @@ EOF
     # Crear configuración persistente de ALSA
     alsactl store
 
-    # Habilitar PulseAudio para todos los usuarios
-    systemctl --global enable pulseaudio
-    systemctl --global start pulseaudio
+    # Eliminar arranque global de PulseAudio (no recomendado en Arch)
+    systemctl --global disable pulseaudio || true
+    systemctl --global stop pulseaudio || true
 
-    # Habilitar y arrancar PulseAudio (solo para sistemas no PipeWire)
-    systemctl --user enable pulseaudio || true
-    systemctl --user start pulseaudio || true
+    # Habilitar y arrancar PulseAudio solo para el usuario (esto lo hará XFCE automáticamente)
+    # systemctl --user enable pulseaudio || true
+    # systemctl --user start pulseaudio || true
 
     # Deshabilitar IPv6 en UFW para evitar errores si el módulo no está disponible
     sed -i "s/^IPV6=.*/IPV6=no/" /etc/default/ufw
@@ -382,9 +382,9 @@ arch-chroot /mnt systemctl enable lightdm
 # Establecer graphical.target como objetivo por defecto
 arch-chroot /mnt systemctl set-default graphical.target
 
-# Habilitar y arrancar el sonido del sistema (PulseAudio)
-arch-chroot /mnt systemctl --global enable pulseaudio
-arch-chroot /mnt systemctl --global start pulseaudio
+# Elimina cualquier arranque global de PulseAudio (NO poner esto aquí)
+# arch-chroot /mnt systemctl --global enable pulseaudio
+# arch-chroot /mnt systemctl --global start pulseaudio
 
 # swapoff -a || true
 umount -R /mnt || true
