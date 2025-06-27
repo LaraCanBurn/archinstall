@@ -235,9 +235,20 @@ function fase_post_install() {
     locale-gen
     echo "LANG=es_ES.UTF-8" > /etc/locale.conf
     echo "KEYMAP=es" > /etc/vconsole.conf
-    # Agregado para configuración de VSCode
-    echo "{ \"files.defaultLanguage\": \"es\" }" >> /etc/vconsole.conf
     echo "ArchLinux" > /etc/hostname
+
+    # Configuración de teclado español para Xorg
+    mkdir -p /etc/X11/xorg.conf.d
+    cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
+Section "InputClass"
+    Identifier "system-keyboard"
+    MatchIsKeyboard "on"
+    Option "XkbLayout" "es"
+EndSection
+EOF
+
+    # Opcional: para compatibilidad con otros DMs
+    echo "XKBLAYOUT=es" > /etc/default/keyboard
 
     # Asegura que el hook keyboard esté presente antes de filesystems
     sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 keyboard filesystems fsck)/" /etc/mkinitcpio.conf
@@ -351,5 +362,7 @@ umount -R /mnt || true
 
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
 echo -e "${YELLOW}El sistema se reiniciará en 5 segundos...${RESET}"
+sleep 5
+reboot
 sleep 5
 reboot
