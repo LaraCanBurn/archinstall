@@ -294,19 +294,16 @@ function fase_hardening_gui() {
     until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
     EDITOR=nano visudo
 
-    # Deshabilitar lightdm para pruebas de login en consola
-    # systemctl disable lightdm   # <-- Elimina o comenta esta línea
-
     # Instalación de entorno gráfico, drivers, utilidades y audio, y open-vm-tools
-    for try in {1..3}; do
-      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pavucontrol open-vm-tools open-vm-tools-desktop && break
+    for try in $(seq 1 3); do
+      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa xf86-input-vmmouse lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pavucontrol open-vm-tools && break
       echo "❗ Error instalando paquetes. Reintentando (\$try/3)..."
       sleep 2
       if [[ \$try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
     done
 
     # Habilitar servicios de VMware Tools
-    systemctl enable vmtoolsd
+    systemctl enable vmtoolsd.service
     systemctl enable vmware-vmblock-fuse
 
     # Autostart del redimensionado automático en XFCE (para usuario LaraCanBurn)
@@ -315,7 +312,7 @@ function fase_hardening_gui() {
 [Desktop Entry]
 Type=Application
 Name=VMware User Agent
-Exec=vmware-user-suid-wrapper
+Exec=vmware-user
 X-GNOME-Autostart-enabled=true
 EOF
     chown -R LaraCanBurn: /home/LaraCanBurn/.config
@@ -395,6 +392,9 @@ umount -R /mnt || true
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
 echo -e "${YELLOW}El sistema se reiniciará en 5 segundos...${RESET}"
 sleep 5
+reboot
+sleep 5
+reboot
 reboot
 sleep 5
 reboot
