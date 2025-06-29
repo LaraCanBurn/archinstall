@@ -123,6 +123,31 @@ function fase_particiones_cifrado() {
   openssl rand -base64 64 > /mnt/etc/luks-keys/root.key
   retry cryptsetup luksAddKey /dev/sda2 /mnt/etc/luks-keys/root.key
 
+  # Crear pool ZFS si ambos mapeos existen
+  if [ -b /dev/mapper/crypt-zfs1 ] && [ -b /dev/mapper/crypt-zfs2 ]; then
+    echo -e "${CYAN}🔧 Creando pool ZFS 'zdata' en RAID-1...${RESET}"
+    retry modprobe zfs
+    retry zpool create -f -o ashift=12 \
+      -O compression=lz4 \
+      -O atime=off \
+      -O xattr=sa \
+      -O acltype=posixacl \
+      -O mountpoint=/zdata \
+      zdata mirror /dev/mapper/crypt-zfs1 /dev/mapper/crypt-zfs2
+
+    echo -e "${CYAN}🔧 Creando datasets ZFS para el sistema...${RESET}"
+    retry zfs create -o mountpoint=/home zdata/home
+    retry zfs create -o mountpoint=/var zdata/var
+    retry zfs create -o mountpoint=/srv zdata/srv
+    retry zfs create -o mountpoint=/tmp zdata/tmp
+    retry zfs create -o mountpoint=/root zdata/root
+    chmod 1777 /zdata/tmp
+
+    echo -e "${GREEN}✅ Pool y datasets ZFS creados correctamente.${RESET}"
+  else
+    echo -e "${YELLOW}⚠️  No se detectaron ambos mapeos ZFS, omitiendo creación de pool/datasets...${RESET}"
+  fi
+
   pausa
 }
 
