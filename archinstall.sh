@@ -78,9 +78,20 @@ function fase_particiones_cifrado() {
 
   # Solo ejecutar cryptsetup si el dispositivo existe
   if [ -b /dev/sdb ]; then
-    mkdir -p /mnt/etc/luks-keys  # <-- Asegura que el directorio exista antes de usarlo
+    mkdir -p /mnt/etc/luks-keys
+    # Cierra el mapeo si ya existe
+    [ -e /dev/mapper/crypt-zfs1 ] && cryptsetup close crypt-zfs1 || true
     retry cryptsetup luksFormat --type luks2 /dev/sdb
-    retry cryptsetup open /dev/sdb crypt-zfs1
+    retry cryptsetup open --type luks2 /dev/sdb crypt-zfs1
+    # Esperar a que el mapeo esté disponible
+    for i in {1..5}; do
+      [ -b /dev/mapper/crypt-zfs1 ] && break
+      sleep 1
+    done
+    if [ ! -b /dev/mapper/crypt-zfs1 ]; then
+      echo -e "${RED}❌ No se pudo mapear /dev/mapper/crypt-zfs1. Abortando...${RESET}"
+      exit 1
+    fi
     openssl rand -base64 64 > /mnt/etc/luks-keys/sdb.key
     retry cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
   else
@@ -88,9 +99,20 @@ function fase_particiones_cifrado() {
   fi
 
   if [ -b /dev/sdc ]; then
-    mkdir -p /mnt/etc/luks-keys  # <-- Asegura que el directorio exista antes de usarlo
+    mkdir -p /mnt/etc/luks-keys
+    # Cierra el mapeo si ya existe
+    [ -e /dev/mapper/crypt-zfs2 ] && cryptsetup close crypt-zfs2 || true
     retry cryptsetup luksFormat --type luks2 /dev/sdc
-    retry cryptsetup open /dev/sdc crypt-zfs2
+    retry cryptsetup open --type luks2 /dev/sdc crypt-zfs2
+    # Esperar a que el mapeo esté disponible
+    for i in {1..5}; do
+      [ -b /dev/mapper/crypt-zfs2 ] && break
+      sleep 1
+    done
+    if [ ! -b /dev/mapper/crypt-zfs2 ]; then
+      echo -e "${RED}❌ No se pudo mapear /dev/mapper/crypt-zfs2. Abortando...${RESET}"
+      exit 1
+    fi
     openssl rand -base64 64 > /mnt/etc/luks-keys/sdc.key
     retry cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
   else
