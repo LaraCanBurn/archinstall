@@ -49,11 +49,15 @@ if [ -b /dev/sdb ] && [ -b /dev/sdc ]; then
     sudo zfs create -o mountpoint=/var zdata/var
     sudo zfs create -o mountpoint=/srv zdata/srv
     sudo zfs create -o mountpoint=/tmp zdata/tmp
-    # Esperar a que /zdata/tmp exista antes de hacer chmod
-    for i in {1..5}; do
+    # Esperar a que /zdata/tmp exista antes de hacer chmod (hasta 10s)
+    for i in {1..10}; do
       [ -d /zdata/tmp ] && break
       sleep 1
     done
+    # Si aún no existe, forzar el montaje
+    if [ ! -d /zdata/tmp ]; then
+      sudo zfs mount zdata/tmp
+    fi
     sudo chmod 1777 /zdata/tmp
     sudo zfs create -o mountpoint=/root zdata/root
 
