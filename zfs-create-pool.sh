@@ -63,14 +63,45 @@ if [ -b /dev/sdb ] && [ -b /dev/sdc ]; then
 
     echo -e "${CYAN}✅ Pool y datasets ZFS creados correctamente.${RESET}"
 
-    # === Automatización de /etc/crypttab ===
-    echo -e "${CYAN}🔧 Configurando /etc/crypttab...${RESET}"
-    for entry in "crypt-zfs1   /dev/sdb   /etc/luks-keys/sdb.key   luks" \
-                "crypt-zfs2   /dev/sdc   /etc/luks-keys/sdc.key   luks"; do
-      if ! grep -q "^${entry}" /etc/crypttab 2>/dev/null; then
-        echo "$entry" | sudo tee -a /etc/crypttab
-      fi
-    done
+    # === Comprobaciones previas para /etc/crypttab con UUIDs ===
+    echo -e "${CYAN}🔧 Comprobando UUIDs y claves para /etc/crypttab...${RESET}"
+    UUID_SDB=$(sudo blkid -s UUID -o value /dev/sdb || true)
+    UUID_SDC=$(sudo blkid -s UUID -o value /dev/sdc || true)
+    KEY_SDB="/etc/luks-keys/sdb.key"
+    KEY_SDC="/etc/luks-keys/sdc.key"
+    ERR=0
+    if [ -z "$UUID_SDB" ]; then
+      echo -e "${YELLOW}⚠️  No se pudo obtener UUID de /dev/sdb. Revisa el disco.${RESET}"
+      ERR=1
+    fi
+    if [ -z "$UUID_SDC" ]; then
+      echo -e "${YELLOW}⚠️  No se pudo obtener UUID de /dev/sdc. Revisa el disco.${RESET}"
+      ERR=1
+    fi
+    if [ ! -f "$KEY_SDB" ]; then
+      echo -e "${YELLOW}⚠️  No existe $KEY_SDB. Crea el archivo de clave o revisa la ruta.${RESET}"
+      ERR=1
+    fi
+    if [ ! -f "$KEY_SDC" ]; then
+      echo -e "${YELLOW}⚠️  No existe $KEY_SDC. Crea el archivo de clave o revisa la ruta.${RESET}"
+      ERR=1
+    fi
+    if [ ! -r "$KEY_SDB" ] || [ ! -r "$KEY_SDC" ]; then
+      echo -e "${YELLOW}⚠️  Los archivos de clave no son legibles por root.${RESET}"
+      ERR=1
+    fi
+    if [ "$ERR" -eq 1 ]; then
+      echo -e "${YELLOW}⚠️  Corrige los problemas anteriores antes de continuar con la configuración automática de /etc/crypttab.${RESET}"
+    else
+      # === Automatización de /etc/crypttab con UUIDs ===
+      echo -e "${CYAN}🔧 Configurando /etc/crypttab con UUIDs...${RESET}"
+      for entry in "crypt-zfs1   UUID=$UUID_SDB   $KEY_SDB   luks" \
+                  "crypt-zfs2   UUID=$UUID_SDC   $KEY_SDC   luks"; do
+        if ! grep -q "^${entry}" /etc/crypttab 2>/dev/null; then
+          echo "$entry" | sudo tee -a /etc/crypttab
+        fi
+      done
+    fi
 
     # === Activación de servicios ZFS ===
     echo -e "${CYAN}🔧 Habilitando servicios ZFS...${RESET}"
