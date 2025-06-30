@@ -62,6 +62,41 @@ if [ -b /dev/sdb ] && [ -b /dev/sdc ]; then
     sudo zfs create -o mountpoint=/root zdata/root
 
     echo -e "${CYAN}✅ Pool y datasets ZFS creados correctamente.${RESET}"
+
+    # === Automatización de /etc/crypttab ===
+    echo -e "${CYAN}🔧 Configurando /etc/crypttab...${RESET}"
+    for entry in "crypt-zfs1   /dev/sdb   /etc/luks-keys/sdb.key   luks" \
+                "crypt-zfs2   /dev/sdc   /etc/luks-keys/sdc.key   luks"; do
+      if ! grep -q "^${entry}" /etc/crypttab 2>/dev/null; then
+        echo "$entry" | sudo tee -a /etc/crypttab
+      fi
+    done
+
+    # === Activación de servicios ZFS ===
+    echo -e "${CYAN}🔧 Habilitando servicios ZFS...${RESET}"
+    for svc in zfs-import-cache zfs-mount zfs.target zfs-import-scan; do
+      sudo systemctl enable "$svc"
+    done
+
+    # === Servicio systemd personalizado para importar el pool tras el arranque ===
+    echo -e "${CYAN}🔧 Creando servicio systemd para importar el pool ZFS tras el arranque...${RESET}"
+    SERVICE_FILE="/etc/systemd/system/zfs-import-zdata.service"
+    sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=Importar pool ZFS zdata después de cryptsetup
+After=cryptsetup.target
+Requires=cryptsetup.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/zpool import zdata
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable zfs-import-zdata
+    echo -e "${CYAN}✅ Configuración automática completada. El pool ZFS se importará tras el arranque.${RESET}"
   else
     echo -e "${YELLOW}⚠️  No se detectaron ambos mapeos cifrados, omitiendo creación de pool/datasets...${RESET}"
   fi
