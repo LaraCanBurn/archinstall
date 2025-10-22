@@ -194,16 +194,31 @@ if [ -b /dev/sdb ] && [ -b /dev/sdc ]; then
       fi
 
       # Añadir entradas a /etc/crypttab (evitar duplicados por nombre)
-      if [ -n "$UUID_SDB" ]; then
-        entry1="crypt-zfs1	UUID=$UUID_SDB	${KEY_SDB:-none}	luks"
-      else
-        entry1="crypt-zfs1	$SDB	${KEY_SDB:-none}	luks"
-      fi
-      if [ -n "$UUID_SDC" ]; then
-        entry2="crypt-zfs2	UUID=$UUID_SDC	${KEY_SDC:-none}	luks"
-      else
-        entry2="crypt-zfs2	$SDC	${KEY_SDC:-none}	luks"
-      fi
+        KEYFIELD_SDB=none
+        KEYFIELD_SDC=none
+        if [ "$USE_KEYFILES" -eq 1 ]; then
+          if [ -f "$KEY_SDB" ]; then
+            KEYFIELD_SDB=$KEY_SDB
+          else
+            echo -e "${YELLOW}Advertencia: se solicitó --use-keyfiles pero $KEY_SDB no existe; se usará passphrase interactiva para $SDB${RESET}"
+          fi
+          if [ -f "$KEY_SDC" ]; then
+            KEYFIELD_SDC=$KEY_SDC
+          else
+            echo -e "${YELLOW}Advertencia: se solicitó --use-keyfiles pero $KEY_SDC no existe; se usará passphrase interactiva para $SDC${RESET}"
+          fi
+        fi
+
+        if [ -n "$UUID_SDB" ]; then
+          entry1="crypt-zfs1	UUID=$UUID_SDB	$KEYFIELD_SDB	luks"
+        else
+          entry1="crypt-zfs1	$SDB	$KEYFIELD_SDB	luks"
+        fi
+        if [ -n "$UUID_SDC" ]; then
+          entry2="crypt-zfs2	UUID=$UUID_SDC	$KEYFIELD_SDC	luks"
+        else
+          entry2="crypt-zfs2	$SDC	$KEYFIELD_SDC	luks"
+        fi
 
       if ! sudo grep -q -F "crypt-zfs1" /etc/crypttab 2>/dev/null; then
         echo -e "${CYAN}Añadiendo crypt-zfs1 a /etc/crypttab${RESET}"
