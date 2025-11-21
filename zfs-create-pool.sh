@@ -1,463 +1,329 @@
 #!/usr/bin/env bash
+# ------------------------------------------------------------------------------
+# zfs-create-pool.sh
+# Crea o actualiza un pool ZFS cifrado (LUKS + RAIDZ) con auto-montaje persistente.
+# Funciona en Arch Linux y similares.
+#
+# Uso:
+#   sudo ./zfs-create-pool.sh          # salida solo por consola, sin logs en disco
+#   sudo ./zfs-create-pool.sh --log    # además guarda /var/log/zfs-create-pool.log
+# ------------------------------------------------------------------------------
+
 set -euo pipefail
 
-# zfs-create-pool.sh — automatiza LUKS + ZFS (idempotente, con modo dry-run)
-# Características:
-# - Comprueba binarios necesarios
-# - Opciones: --dry-run, --yes, --use-keyfiles, --mkinitcpio
-# - Crea keyfiles seguros (si se pide) y los añade a LUKS
-# - Añade entradas a /etc/crypttab usando luksUUID (evita duplicados)
-# - Edita opcionalmente /etc/mkinitcpio.conf para incluir 'encrypt' y 'zfs'
-# - Abre dispositivos LUKS, crea pool/datasets de forma idempotente
-# - Crea unidad systemd para importar el pool tras desbloqueo
-
-# Colores para salida
+# =====================
+# COLORES
+# =====================
 CYAN='\033[36m'
 GREEN='\033[32m'
 YELLOW='\033[33m'
 RED='\033[31m'
 RESET='\033[0m'
 
-SDB=${SDB:-/dev/sdb}
-SDC=${SDC:-/dev/sdc}
-MAP1=/dev/mapper/crypt-zfs1
-MAP2=/dev/mapper/crypt-zfs2
-POOL_NAME=${POOL_NAME:-zdata}
-DRY_RUN=0
-ASSUME_YES=0
-USE_KEYFILES=0
-MKINITCPIO=0
-ARG_COUNT_INIT=$#
-INTERACTIVE=0
+# =====================
+# CONFIG GLOBAL
+# =====================
+
+POOL_NAME="zdata"
+RAID_LEVEL="raidz1"            # raidz1, raidz2, raidz3, mirror
+DISKS=("/dev/sdb" "/dev/sdc")  # ajusta según tu hardware / VM
+KEY_DIR="/etc/luks-keys"
+DATASETS=(home var srv tmp root)
+
+# Logging
+LOG_TO_FILE=0                  # 0 = NO escribir a fichero (por defecto), 1 = sí
+LOG_FILE="/var/log/zfs-create-pool.log"
+
+# =====================
+# PARÁMETROS CLI
+# =====================
 
 usage() {
+  local me
+  me="$(basename "$0")"
   cat <<EOF
-Usage: $0 [options]
-Options:
-  --dry-run         Mostrar acciones sin ejecutar
-  --yes             No pedir confirmación para acciones destructivas
-  --use-keyfiles    Crear y usar keyfiles en /etc/luks-keys
-  --mkinitcpio      Modificar /etc/mkinitcpio.conf y ejecutar mkinitcpio -P
-  --auto            Ejecutar en modo completamente automático (sin pausas, asume yes)
-  --sdb <device>    Disco 1 (default: /dev/sdb)
-  --sdc <device>    Disco 2 (default: /dev/sdc)
-  -h, --help        Mostrar esta ayuda
+Uso: sudo $me [opciones]
+
+Opciones:
+  --log        Además de la consola, guarda mensajes en $LOG_FILE
+  -h, --help   Muestra esta ayuda y sale
+
+Sin opciones, el script solo usa salida por consola y no guarda logs en disco.
 EOF
 }
 
-while [ "$#" -gt 0 ]; do
+while [[ $# -gt 0 ]]; do
   case "$1" in
-      --dry-run) DRY_RUN=1; shift;;
-      --yes) ASSUME_YES=1; shift;;
-      --use-keyfiles) USE_KEYFILES=1; shift;;
-      --mkinitcpio) MKINITCPIO=1; shift;;
-      --auto) INTERACTIVE=0; ASSUME_YES=1; shift;;
-    --sdb) SDB=$2; shift 2;;
-    --sdc) SDC=$2; shift 2;;
-    -h|--help) usage; exit 0;;
-    *) echo -e "${YELLOW}Aviso: argumento desconocido: $1${RESET}"; usage; exit 1;;
+    --log)
+      LOG_TO_FILE=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo -e "${RED}[ERROR]${RESET} Opción desconocida: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
+
+# =====================
+# FUNCIONES AUXILIARES
+# =====================
+
+_log_write_file() {
+  local level="$1"
+  local msg="$2"
+  if [ "$LOG_TO_FILE" -eq 1 ]; then
+    mkdir -p "$(dirname "$LOG_FILE")"
+    echo "$(date '+%F %T') [$level] $msg" >> "$LOG_FILE"
+  fi
+}
+
+log() {
+  echo -e "${CYAN}[INFO]${RESET} $1"
+  _log_write_file "INFO" "$1"
+}
+
+success() {
+  echo -e "${GREEN}[OK]  ${RESET} $1"
+  _log_write_file "OK" "$1"
+}
+
+warn() {
+  echo -e "${YELLOW}[WARN]${RESET} $1"
+  _log_write_file "WARN" "$1"
+}
+
+error() {
+  echo -e "${RED}[ERR] ${RESET} $1"
+  _log_write_file "ERROR" "$1"
+}
 
 run() {
-  if [ "$DRY_RUN" -eq 1 ]; then
-    echo -e "[DRY-RUN] $*"
-  else
-    echo -e "[RUN] $*"
-    eval "$@"
-  fi
+  echo -e "${CYAN}[RUN] ${RESET}$*"
+  "$@"
 }
 
-# Ejecuta un comando, captura su salida y código de salida, y la muestra.
-# Mantiene comportamiento de dry-run. Usar para pasos que quieres inspeccionar.
-run_and_show() {
-  local cmd="$*"
-  echo -e "${CYAN}=> Ejecutando: $cmd${RESET}"
-  if [ "$DRY_RUN" -eq 1 ]; then
-    echo -e "[DRY-RUN] $cmd"
-    return 0
-  fi
-  local output
-  output=$(eval "$cmd" 2>&1) || true
-  local status=$?
-  if [ -n "$output" ]; then
-    echo "----- salida -----"
-    echo "$output"
-    echo "----- fin salida -----"
-  else
-    echo "(sin salida)"
-  fi
-  if [ $status -ne 0 ]; then
-    echo -e "${RED}Comando terminó con código $status${RESET}"
-  else
-    echo -e "${GREEN}Comando OK${RESET}"
-  fi
-  return $status
-}
+# =====================
+# COMPROBACIONES INICIALES
+# =====================
 
-# Pausa interactiva entre pasos (solo si se lanzó sin argumentos)
-pause() {
-  if [ "$INTERACTIVE" -eq 1 ]; then
-    read -r -p $'Presiona Enter para continuar (Ctrl+C para abortar)\n'
-  fi
-}
+echo -e "${CYAN}========================================================${RESET}"
+echo -e "${CYAN}   Script ZFS cifrado (${POOL_NAME}) - RAID: ${RAID_LEVEL}${RESET}"
+echo -e "${CYAN}========================================================${RESET}"
 
-confirm() {
-  if [ "$ASSUME_YES" -eq 1 ]; then
-    return 0
-  fi
-  read -r -p "$1 [y/N]: " ans
-  case "$ans" in
-    [Yy]|[Yy][Ee][Ss]) return 0;;
-    *) return 1;;
-  esac
-}
-
-check_bin() {
-  for b in "$@"; do
-    if ! command -v "$b" >/dev/null 2>&1; then
-      echo -e "${RED}Error: $b no está instalado o no está en PATH.${RESET}" >&2
-      exit 1
-    fi
-  done
-}
-
-# Comprobar si un dispositivo tiene particiones o sistemas de ficheros montados
-check_device_safety() {
-  for dev in "$SDB" "$SDC"; do
-    if [ ! -b "$dev" ]; then
-      echo -e "${RED}Error: dispositivo $dev no encontrado.${RESET}"
-      exit 1
-    fi
-    # ¿tiene particiones? lsblk mostrará hijos
-    parts=$(lsblk -no NAME "$dev" | wc -l || true)
-    if [ "$parts" -gt 1 ]; then
-      echo -e "${YELLOW}Advertencia: $dev parece tener particiones (lsblk muestra $parts líneas).${RESET}"
-      if ! confirm "Continuar y usar $dev (puede destruir datos)?"; then
-        echo "Abortado por usuario."; exit 1
-      fi
-    fi
-    # ¿tiene sistema de ficheros montado?
-    mountpoint=$(lsblk -no MOUNTPOINT "$dev" 2>/dev/null | tr -d '[:space:]' || true)
-    if [ -n "$mountpoint" ]; then
-      echo -e "${YELLOW}Advertencia: $dev tiene mountpoint(s): $mountpoint${RESET}"
-      if ! confirm "Continuar y usar $dev (puede desmontar/matar montajes)?"; then
-        echo "Abortado por usuario."; exit 1
-      fi
-    fi
-  done
-}
-
-check_bin sudo cryptsetup zpool zfs systemctl
-if [ "$MKINITCPIO" -eq 1 ]; then
-  check_bin mkinitcpio
-fi
-
-# Si no se pasaron argumentos al script, activar modo interactivo (pausas)
-if [ "$ARG_COUNT_INIT" -eq 0 ]; then
-  INTERACTIVE=1
-  echo -e "${CYAN}Modo interactivo activado: el script hará pausas entre pasos para verificación.${RESET}"
-fi
-
-# Verificar si el módulo zfs está disponible para el kernel
-if ! modinfo zfs >/dev/null 2>&1; then
-  cat <<MSG
-${YELLOW}Aviso: el módulo kernel 'zfs' no está disponible para tu kernel.${RESET}
-Esto significa que no hay módulos ZFS compilados e instalados para el kernel actual.
-Sigue estos pasos (Arch Linux / linux-zen como ejemplo):
-
-1) Instala los headers del kernel y DKMS:
-   sudo pacman -Syu
-   sudo pacman -S --needed base-devel dkms linux-zen-headers
-   # ajusta linux-zen-headers si usas otro kernel (linux, linux-lts, ...)
-
-2) Instala ZFS via AUR (recomendado: spl-dkms y zfs-dkms, y zfs-utils):
-   # con un ayudante AUR como yay o paru:
-   yay -S spl-dkms zfs-dkms zfs-utils
-   # o compila manualmente con makepkg desde AUR
-
-3) Forzar compilación DKMS (si es necesario):
-   sudo dkms autoinstall
-
-4) Cargar el módulo:
-   sudo modprobe zfs
-
-Si prefieres que el script te muestre estas instrucciones en vez del error crudo, ejecuta el script tras instalar zfs.
-MSG
+if ! command -v zpool >/dev/null 2>&1; then
+  error "ZFS no está instalado. Instala 'zfs-dkms' y 'zfs-utils'."
   exit 1
 fi
 
-pause
-
-echo -e "${CYAN}Inicio de la automatización LUKS+ZFS (pool=${POOL_NAME})${RESET}"
-
-# Cargar módulo zfs si está disponible
-if [ "$DRY_RUN" -eq 0 ]; then
-  run sudo modprobe zfs || true
-  pause
-else
-  echo -e "[DRY-RUN] modprobe zfs"
-fi
-
-# Validar dispositivos
-if [ ! -b "$SDB" ] || [ ! -b "$SDC" ]; then
-  echo -e "${RED}Error: No se detectaron ambos dispositivos: $SDB y/o $SDC no existen.${RESET}"
+if [ "$(id -u)" -ne 0 ]; then
+  error "Debes ejecutar este script como root o con sudo."
   exit 1
 fi
 
-echo -e "${CYAN}Dispositivos: $SDB, $SDC${RESET}"
-
-# Opcional: crear keyfiles
-pause
-
-# Comprobar seguridad de los dispositivos antes de operaciones destructivas
-check_device_safety
-
-KEY_DIR=/etc/luks-keys
-KEY_SDB=$KEY_DIR/$(basename "$SDB").key
-KEY_SDC=$KEY_DIR/$(basename "$SDC").key
-if [ "$USE_KEYFILES" -eq 1 ]; then
-  if [ ! -d "$KEY_DIR" ]; then
-    run sudo mkdir -p "$KEY_DIR"
-    run sudo chmod 700 "$KEY_DIR"
-  fi
-  for k in "$KEY_SDB" "$KEY_SDC"; do
-    if [ ! -f "$k" ]; then
-      echo -e "${CYAN}Generando keyfile $k${RESET}"
-      run sudo dd if=/dev/urandom of="$k" bs=4096 count=1 status=none
-      run sudo chmod 600 "$k"
-      run sudo chown root:root "$k"
-    else
-      echo -e "${YELLOW}Keyfile $k ya existe, se conservará.${RESET}"
-    fi
-  done
-  # Añadir la key a LUKS (intentaremos añadir, si falla pedir intervención)
-  if [ "$DRY_RUN" -eq 0 ]; then
-    echo -e "${CYAN}Añadiendo keyfiles a LUKS (te pedirá la passphrase si es necesario)...${RESET}"
-      pause
-    sudo cryptsetup isLuks "$SDB" && sudo cryptsetup luksAddKey "$SDB" "$KEY_SDB" || true
-    sudo cryptsetup isLuks "$SDC" && sudo cryptsetup luksAddKey "$SDC" "$KEY_SDC" || true
-  else
-    echo -e "[DRY-RUN] cryptsetup luksAddKey $SDB $KEY_SDB"
-    echo -e "[DRY-RUN] cryptsetup luksAddKey $SDC $KEY_SDC"
-  fi
-fi
-
-# Obtener UUIDs LUKS
-pause
-
-UUID_SDB=$(sudo cryptsetup luksUUID "$SDB" 2>/dev/null || true)
-UUID_SDC=$(sudo cryptsetup luksUUID "$SDC" 2>/dev/null || true)
-
-if [ -z "$UUID_SDB" ] || [ -z "$UUID_SDC" ]; then
-  echo -e "${YELLOW}Advertencia: uno o ambos dispositivos no devuelven luksUUID. Asegúrate de que son LUKS.${RESET}"
-fi
-
-# Backup /etc/crypttab
-if [ -f /etc/crypttab ]; then
-  run sudo cp /etc/crypttab /etc/crypttab.bak-$(date +%Y%m%d-%H%M%S)
-  pause
-fi
-
-# Añadir entradas a /etc/crypttab (evitar duplicados por nombre)
-# Decidir si usamos keyfile (solo si --use-keyfiles y el archivo existe)
-KEYFIELD_SDB=none
-KEYFIELD_SDC=none
-if [ "$USE_KEYFILES" -eq 1 ]; then
-  if [ -f "$KEY_SDB" ]; then
-    KEYFIELD_SDB=$KEY_SDB
-  else
-    echo -e "${YELLOW}Advertencia: se solicitó --use-keyfiles pero $KEY_SDB no existe; se usará passphrase interactiva para $SDB${RESET}"
-  fi
-  if [ -f "$KEY_SDC" ]; then
-    KEYFIELD_SDC=$KEY_SDC
-  else
-    echo -e "${YELLOW}Advertencia: se solicitó --use-keyfiles pero $KEY_SDC no existe; se usará passphrase interactiva para $SDC${RESET}"
-  fi
-fi
-
-if [ -n "$UUID_SDB" ]; then
-  entry1="crypt-zfs1\tUUID=$UUID_SDB\t$KEYFIELD_SDB\tluks"
+log "Discos configurados: ${DISKS[*]}"
+if [ "$LOG_TO_FILE" -eq 1 ]; then
+  log "Logging a fichero habilitado: $LOG_FILE"
 else
-  entry1="crypt-zfs1\t$SDB\t$KEYFIELD_SDB\tluks"
-fi
-if [ -n "$UUID_SDC" ]; then
-  entry2="crypt-zfs2\tUUID=$UUID_SDC\t$KEYFIELD_SDC\tluks"
-else
-  entry2="crypt-zfs2\t$SDC\t$KEYFIELD_SDC\tluks"
+  log "Logging persistente desactivado (solo consola)."
 fi
 
-if ! sudo grep -q -F "crypt-zfs1" /etc/crypttab 2>/dev/null; then
-  echo -e "${CYAN}Añadiendo crypt-zfs1 a /etc/crypttab${RESET}"
-  run sudo sh -c "printf '%s\n' '$entry1' >> /etc/crypttab"
-  pause
-else
-  echo -e "${YELLOW}Entrada crypt-zfs1 ya existe en /etc/crypttab, omitiendo.${RESET}"
-fi
-if ! sudo grep -q -F "crypt-zfs2" /etc/crypttab 2>/dev/null; then
-  echo -e "${CYAN}Añadiendo crypt-zfs2 a /etc/crypttab${RESET}"
-  run sudo sh -c "printf '%s\n' '$entry2' >> /etc/crypttab"
-  pause
-else
-  echo -e "${YELLOW}Entrada crypt-zfs2 ya existe en /etc/crypttab, omitiendo.${RESET}"
-fi
+mkdir -p "$KEY_DIR"
+chmod 700 "$KEY_DIR"
 
-# Opcional: actualizar mkinitcpio.conf
-if [ "$MKINITCPIO" -eq 1 ]; then
-  MKCONF=/etc/mkinitcpio.conf
-  pause
-  run sudo cp "$MKCONF" "$MKCONF.bak-$(date +%Y%m%d-%H%M%S)"
-  # Añadir zfs a MODULES si no existe
-  if ! sudo grep -q "MODULES=.*zfs" "$MKCONF" 2>/dev/null; then
-    echo -e "${CYAN}Añadiendo 'zfs' a MODULES en $MKCONF${RESET}"
-    run sudo sed -i "s/^MODULES=(/MODULES=(zfs /" "$MKCONF" || true
-    pause
-  fi
-  # Asegurar 'encrypt' en HOOKS antes de filesystems
-  if ! sudo grep -q "hooks=.*encrypt" "$MKCONF" 2>/dev/null; then
-    echo -e "${CYAN}Añadiendo 'encrypt' a HOOKS en $MKCONF${RESET}"
-    run sudo sed -i "s/^HOOKS=(\(.*\)filesystems/HOOKS=(\1encrypt filesystems/" "$MKCONF" || true
-    pause
-  fi
-  echo -e "${CYAN}Regenerando initramfs...${RESET}"
-  run sudo mkinitcpio -P
-  pause
-fi
+declare -A MAPS    # dev físico -> /dev/mapper/crypt-xxx
+declare -a MAPPERS # lista de nombres de mapeo (crypt-sdb, crypt-sdc, ...)
 
-# Intentar abrir los dispositivos si no están mapeados
-if [ ! -b "$MAP1" ]; then
-  if sudo cryptsetup isLuks "$SDB" >/dev/null 2>&1; then
-    echo -e "${CYAN}Abriendo $SDB -> crypt-zfs1${RESET}"
-    run sudo cryptsetup open "$SDB" crypt-zfs1 || true
-      pause
+# =====================
+# PASO 1/5: LUKS + KEYFILES
+# =====================
+
+echo -e "${CYAN}=== PASO 1/5: Preparando LUKS y keyfiles ==================${RESET}"
+
+for dev in "${DISKS[@]}"; do
+  name="crypt-$(basename "$dev")"
+  keyfile="$KEY_DIR/$(basename "$dev").key"
+
+  log "Procesando disco ${dev} → mapeo ${name}"
+
+  if cryptsetup isLuks "$dev" >/dev/null 2>&1; then
+    warn "$dev ya está cifrado con LUKS, no se reformatea."
   else
-    echo -e "${YELLOW}Advertencia: $SDB no parece LUKS, omitiendo open.${RESET}"
+    log "Creando LUKS en ${dev}"
+    run dd if=/dev/random of="$keyfile" bs=1 count=64 status=none
+    run chmod 600 "$keyfile"
+    run cryptsetup luksFormat "$dev" "$keyfile" --type luks2 --batch-mode
+    success "LUKS creado en ${dev}"
   fi
-fi
-if [ ! -b "$MAP2" ]; then
-  if sudo cryptsetup isLuks "$SDC" >/dev/null 2>&1; then
-    echo -e "${CYAN}Abriendo $SDC -> crypt-zfs2${RESET}"
-    run sudo cryptsetup open "$SDC" crypt-zfs2 || true
-      pause
-  else
-    echo -e "${YELLOW}Advertencia: $SDC no parece LUKS, omitiendo open.${RESET}"
-  fi
-fi
 
-# Esperar a mapeos
-for i in {1..10}; do
-  if [ -b "$MAP1" ] && [ -b "$MAP2" ]; then
-    break
+  if ! cryptsetup status "$name" >/dev/null 2>&1; then
+    log "Abriendo ${dev} como ${name}"
+    run cryptsetup open "$dev" "$name" --key-file "$keyfile"
+    success "Mapa ${name} abierto."
+  else
+    warn "${name} ya estaba abierto."
   fi
-  pause
-  sleep 1
+
+  MAPS["$dev"]="/dev/mapper/$name"
+  MAPPERS+=("$name")
 done
 
-if ! [ -b "$MAP1" ] || ! [ -b "$MAP2" ]; then
-  echo -e "${RED}Error: No se detectaron ambos mapeos en /dev/mapper (crypt-zfs1/2). Abortando.${RESET}"
-  exit 1
-  pause
-fi
+# =====================
+# PASO 2/5: POOL ZFS
+# =====================
 
-echo -e "${GREEN}Mappers detectados: $(ls -l $MAP1 $MAP2 2>/dev/null)${RESET}"
+echo -e "${CYAN}=== PASO 2/5: Creando o actualizando el pool ZFS ==========${RESET}"
 
-# Crear zpool si no existe
-if sudo zpool list "$POOL_NAME" >/dev/null 2>&1; then
-  echo -e "${YELLOW}El pool $POOL_NAME ya existe, omitiendo creación.${RESET}"
-  pause
+if zpool list "$POOL_NAME" >/dev/null 2>&1; then
+  success "Pool ${POOL_NAME} ya existe. Comprobando si hay discos nuevos..."
+
+  existing_disks=($(zpool status "$POOL_NAME" | awk '/raidz|mirror/{f=1; next} f && NF{print $1}' | sort))
+  new_devices=()
+
+  for dev in "${DISKS[@]}"; do
+    map_dev="${MAPS[$dev]}"           # /dev/mapper/crypt-sdX
+    base_map="$(basename "$map_dev")" # crypt-sdX
+    if ! printf '%s\n' "${existing_disks[@]}" | grep -q "^${base_map}\$"; then
+      new_devices+=("$map_dev")
+    fi
+  done
+
+  if [ ${#new_devices[@]} -gt 0 ]; then
+    warn "Detectados nuevos dispositivos para el pool: ${new_devices[*]}"
+    warn "Se intentará 'zpool add' (añadir vdevs simples; no cambia el nivel RAID existente)."
+    for new_dev in "${new_devices[@]}"; do
+      log "Añadiendo ${new_dev} al pool ${POOL_NAME}"
+      if ! run zpool add "$POOL_NAME" "$new_dev"; then
+        warn "No se pudo añadir $new_dev automáticamente. Revisa manualmente."
+      else
+        success "${new_dev} añadido al pool ${POOL_NAME}."
+      fi
+    done
+    run zpool status "$POOL_NAME"
+  else
+    success "No hay nuevos discos que añadir al pool ${POOL_NAME}."
+  fi
+
 else
-  # volver a comprobar seguridad justo antes de crear el pool
-  check_device_safety
-  echo -e "${CYAN}Creando pool $POOL_NAME en mirror...${RESET}"
-  run sudo zpool create -o ashift=12 \
+  log "Creando nuevo pool ${POOL_NAME} con tipo ${RAID_LEVEL}"
+  run zpool create -o ashift=12 \
     -O compression=lz4 \
     -O atime=off \
     -O xattr=sa \
     -O acltype=posixacl \
     -O mountpoint=/zdata \
-    "$POOL_NAME" mirror "$MAP1" "$MAP2"
+    -O cachefile=/etc/zfs/zpool.cache \
+    "$POOL_NAME" "$RAID_LEVEL" "${MAPS[@]}"
+  success "Pool ${POOL_NAME} creado correctamente."
 fi
 
-# Crear datasets idempotentemente
-pause
+run zpool set cachefile=/etc/zfs/zpool.cache "$POOL_NAME"
+
+# =====================
+# PASO 3/5: DATASETS
+# =====================
+
+echo -e "${CYAN}=== PASO 3/5: Creando datasets y puntos de montaje =========${RESET}"
 
 create_dataset() {
-  ds="$1"
-  mp="$2"
-  if sudo zfs list "$ds" >/dev/null 2>&1; then
-    echo -e "${YELLOW}Dataset $ds ya existe, omitiendo.${RESET}"
-    pause
+  local name="$1"
+  local mountpoint="$2"
+
+  if zfs list "${POOL_NAME}/${name}" >/dev/null 2>&1; then
+    warn "Dataset ${POOL_NAME}/${name} ya existe, se mantiene."
   else
-    echo -e "${CYAN}Creando dataset $ds con mountpoint=$mp${RESET}"
-    run sudo zfs create -o mountpoint="$mp" "$POOL_NAME/$ds"
-    pause
+    log "Creando dataset ${POOL_NAME}/${name} → ${mountpoint}"
+    run zfs create -o mountpoint="$mountpoint" "${POOL_NAME}/${name}"
+    success "Dataset ${POOL_NAME}/${name} creado."
   fi
 }
 
-create_dataset home /home
-create_dataset var /var
-create_dataset srv /srv
-create_dataset tmp /tmp
-pause
-
-# Asegurar permisos tmp
-for i in {1..10}; do
-  [ -d /zdata/tmp ] && break
-  sleep 1
+for ds in "${DATASETS[@]}"; do
+  case "$ds" in
+    tmp)  mp="/tmp"  ;;
+    root) mp="/root" ;;
+    *)    mp="/${ds}";;
+  esac
+  create_dataset "$ds" "$mp"
 done
-if [ -d /zdata/tmp ]; then
-  run sudo chmod 1777 /zdata/tmp
-  pause
-else
-  echo -e "${YELLOW}Advertencia: /zdata/tmp no existe tras crear dataset tmp.${RESET}"
+
+if [ -d /tmp ]; then
+  run chmod 1777 /tmp
 fi
-create_dataset root /root
 
-echo -e "${GREEN}Pool y datasets preparados.${RESET}"
+# =====================
+# PASO 4/5: SYSTEMD AUTO-IMPORT
+# =====================
 
-pause
+echo -e "${CYAN}=== PASO 4/5: Configurando auto-import y auto-mount (systemd)${RESET}"
 
-# Habilitar servicios ZFS
-for svc in zfs-import-cache zfs-import-scan zfs-mount zfs.target; do
-  echo -e "${CYAN}Habilitando servicio $svc${RESET}"
-  run sudo systemctl enable "$svc"
-  pause
-done
+log "Deshabilitando importadores genéricos de ZFS (si existían)..."
+run systemctl disable zfs-import-cache.service zfs-import-scan.service || true
 
-# Crear unidad systemd para importar el pool después del desbloqueo
-pause
+log "Habilitando zfs-mount.service y zfs.target..."
+run systemctl enable zfs-mount.service zfs.target
 
-SERVICE_FILE=/etc/systemd/system/zfs-import-${POOL_NAME}.service
-if [ -f "$SERVICE_FILE" ]; then
-  echo -e "${YELLOW}Servicio $SERVICE_FILE ya existe, omitiendo creación.${RESET}"
-else
-  echo -e "${CYAN}Creando unidad systemd $SERVICE_FILE${RESET}"
-  run sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+CRYPT_UNITS=$(printf 'systemd-cryptsetup@%s.service ' "${MAPPERS[@]}")
+
+SERVICE_FILE="/etc/systemd/system/zfs-import-${POOL_NAME}.service"
+log "Creando servicio systemd personalizado: $(basename "$SERVICE_FILE")"
+cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Importar pool ZFS ${POOL_NAME} después de desbloquear LUKS
-Requires=systemd-cryptsetup@crypt-zfs1.service systemd-cryptsetup@crypt-zfs2.service
-After=systemd-cryptsetup@crypt-zfs1.service systemd-cryptsetup@crypt-zfs2.service
+Requires=${CRYPT_UNITS}
+After=${CRYPT_UNITS}
+Before=zfs-mount.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/zpool import ${POOL_NAME}
-TimeoutStartSec=60
+ExecStart=/usr/bin/zpool import -N ${POOL_NAME}
+RemainAfterExit=yes
+TimeoutStartSec=90
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=zfs.target
 EOF
-  run sudo systemctl daemon-reload
-  run sudo systemctl enable "zfs-import-${POOL_NAME}"
-fi
 
-pause
+run systemctl daemon-reload
+run systemctl enable "zfs-import-${POOL_NAME}.service"
+success "Servicio zfs-import-${POOL_NAME}.service configurado y habilitado."
 
-echo -e "${GREEN}Automatización completada. Revisa /etc/crypttab y el servicio systemd antes de reiniciar.${RESET}"
+# =====================
+# PASO 5/5: /etc/crypttab
+# =====================
 
-echo -e "${CYAN}Comandos de verificación sugeridos:${RESET}"
-echo "  ls /dev/mapper/crypt-zfs*"
-echo "  sudo systemctl status systemd-cryptsetup@crypt-zfs1.service systemd-cryptsetup@crypt-zfs2.service"
-echo "  sudo systemctl status zfs-import-${POOL_NAME}"
-echo "  sudo zpool status"
-echo "  sudo zfs list"
-pause
+echo -e "${CYAN}=== PASO 5/5: Actualizando /etc/crypttab ===================${RESET}"
+
+log "Sincronizando entradas de LUKS en /etc/crypttab (sin mostrar UUIDs por pantalla)."
+
+for dev in "${DISKS[@]}"; do
+  name="crypt-$(basename "$dev")"
+  keyfile="$KEY_DIR/$(basename "$dev").key"
+  uuid=$(cryptsetup luksUUID "$dev")
+  if grep -q "$uuid" /etc/crypttab 2>/dev/null; then
+    warn "Entrada crypttab para ${name} ya existe, se mantiene."
+  else
+    echo "${name}  UUID=${uuid}  ${keyfile}  luks" >> /etc/crypttab
+    success "Añadida entrada crypttab para ${name}."
+  fi
+done
+
+# =====================
+# RESUMEN FINAL
+# =====================
+
+echo -e "${CYAN}=== RESUMEN: ESTADO DEL POOL Y DATASETS ====================${RESET}"
+run zpool status
+run zfs list
+
+echo -e "${GREEN}========================================================${RESET}"
+echo -e "${GREEN}[OK]  Configuración completa. Reinicia el sistema para que el pool${RESET}"
+echo -e "${GREEN}      y todos los datasets se importen y monten automáticamente.${RESET}"
+echo -e "${GREEN}========================================================${RESET}"
+
+exit 0
