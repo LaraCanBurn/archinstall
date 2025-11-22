@@ -24,12 +24,6 @@ RESET='\033[0m'
 # CONFIG GLOBAL
 # =====================
 
-# En RAID_LEVEL puedes poner:
-#   mirror → espejado (2 discos mínimos, 2, 3, 4… por vdev mirror)
-#   raidz1 → equivalente a RAID5 (mínimo 3 discos en ese vdev)
-#   raidz2 → equivalente a RAID6 (mínimo 4 discos)
-#   raidz3 → triple paridad (mínimo 5 discos)
-
 POOL_NAME="zdata"
 RAID_LEVEL="mirror"            # raidz1, raidz2, raidz3, mirror
 DISKS=("/dev/sdb" "/dev/sdc")  # ajusta según tu hardware / VM
@@ -114,6 +108,70 @@ run() {
   "$@"
 }
 
+# Reintentos específicos para luksAddKey (hasta 3 intentos si la passphrase es incorrecta)
+luks_add_key_with_retries() {
+  local dev="$1"
+  local keyfile="$2"
+  local max_tries=3
+  local attempt
+
+  for attempt in $(seq 1 "$max_tries"); do
+    echo -e "${CYAN}[RUN] ${RESET}cryptsetup luksAddKey ${dev} ${keyfile} (intento ${attempt}/${max_tries})"
+    if cryptsetup luksAddKey "$dev" "$keyfile"; then
+      success "Keyfile añadido a LUKS en ${dev}."
+      return 0
+    else
+      if (( attempt < max_tries )); then
+        warn "No se pudo añadir el keyfile a ${dev}. ¿Passphrase incorrecta? Vuelve a intentarlo."
+      else
+        error "No se pudo añadir el keyfile a ${dev} tras ${max_tries} intentos."
+      fi
+    fi
+  done
+
+  return 1
+}
+
+# Crea un keyfile temporal, intenta añadirlo y solo lo consolida si el addKey tiene éxito
+create_keyfile_and_add() {
+  local dev="$1"
+  local final_keyfile="$2"
+  local tmp_keyfile="${final_keyfile}.tmp.$$"
+
+  log "Creando keyfile temporal para ${dev}: ${tmp_keyfile}"
+  run dd if=/dev/random of="$tmp_keyfile" bs=1 count=64 status=none
+  run chmod 600 "$tmp_keyfile"
+
+  if luks_add_key_with_retries "$dev" "$tmp_keyfile"; then
+    log "Consolidando keyfile en ${final_keyfile}"
+    mv "$tmp_keyfile" "$final_keyfile"
+    return 0
+  else
+    warn "El keyfile temporal para ${dev} no se pudo asociar a LUKS. Eliminando fichero."
+    rm -f "$tmp_keyfile"
+    return 1
+  fi
+}
+
+# Verifica si un keyfile existente realmente funciona con ese LUKS
+validate_existing_keyfile() {
+  local dev="$1"
+  local keyfile="$2"
+
+  if [ ! -f "$keyfile" ]; then
+    return 1
+  fi
+
+  # --test-passphrase no abre el volumen, solo verifica
+  if cryptsetup open --test-passphrase --key-file "$keyfile" "$dev" >/dev/null 2>&1; then
+    success "Keyfile ${keyfile} válido para ${dev}."
+    return 0
+  else
+    warn "Keyfile ${keyfile} no es válido para ${dev}. Será regenerado."
+    return 1
+  fi
+}
+
 # =====================
 # COMPROBACIONES INICIALES
 # =====================
@@ -160,19 +218,19 @@ for dev in "${DISKS[@]}"; do
   if cryptsetup isLuks "$dev" >/dev/null 2>&1; then
     warn "$dev ya está cifrado con LUKS, no se reformatea."
 
-    # Si no existe keyfile, lo creamos y lo añadimos como nueva clave
-    if [ ! -f "$keyfile" ]; then
-      log "No existe keyfile para ${dev}. Creando y añadiendo a LUKS (se pedirá la passphrase actual)."
-      run dd if=/dev/random of="$keyfile" bs=1 count=64 status=none
-      run chmod 600 "$keyfile"
-      # Esto pedirá la *passphrase actual* del volumen una sola vez
-      run cryptsetup luksAddKey "$dev" "$keyfile"
-      success "Keyfile añadido a LUKS en ${dev}."
+    # Si ya hay keyfile, comprobamos que realmente funcione
+    if validate_existing_keyfile "$dev" "$keyfile"; then
+      log "Usando keyfile existente para ${dev}."
     else
-      log "Keyfile ${keyfile} ya existe. Se usará para abrir el volumen."
+      log "No existe keyfile válido para ${dev}. Se creará uno nuevo y se añadirá (se pedirá la passphrase actual)."
+      if ! create_keyfile_and_add "$dev" "$keyfile"; then
+        error "No se pudo crear/asociar un keyfile válido para ${dev}. Abortando."
+        exit 1
+      fi
     fi
   else
     log "Creando LUKS2 + AES-XTS 512 + Argon2id endurecido en ${dev}"
+    # Para discos nuevos, usamos directamente el keyfile como passphrase principal
     run dd if=/dev/random of="$keyfile" bs=1 count=64 status=none
     run chmod 600 "$keyfile"
     run cryptsetup luksFormat \
