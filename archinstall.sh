@@ -9,6 +9,13 @@ YELLOW='\033[33m'
 CYAN='\033[36m'
 RESET='\033[0m'
 
+# Variables globales dinámicas
+ROOT_DISK=""      # Disco donde se instala el sistema (ej: /dev/sda, /dev/nvme0n1)
+BOOT_PART=""      # Partición EFI (ej: /dev/sda1, /dev/nvme0n1p1)
+CRYPT_PART=""     # Partición LUKS raíz (ej: /dev/sda2, /dev/nvme0n1p2)
+ZFS_DISKS=()      # Array de discos para ZFS (ej: /dev/sdb /dev/sdc)
+USERNAME=""       # Usuario que se creará
+
 # 🔁 Función para reintentos de comandos
 function retry() {
   local n=1
@@ -42,6 +49,71 @@ function pausa() {
   read
 }
 
+# 🔍 Selección de discos y usuario
+function seleccionar_discos_y_usuario() {
+  header "SELECCIÓN DE DISCO Y USUARIO"
+
+  echo -e "${CYAN}🔎 Discos disponibles:${RESET}"
+  lsblk -dpno NAME,SIZE,MODEL | grep -E '/dev/(sd|vd|nvme|mmcblk)' || true
+  echo
+
+  # Seleccionar disco raíz
+  while [[ -z "${ROOT_DISK}" ]]; do
+    read -rp "➡ Introduce el disco para instalar Arch (ej: /dev/sda, /dev/nvme0n1): " ROOT_DISK
+    if [[ ! -b "$ROOT_DISK" ]]; then
+      echo -e "${RED}❌ $ROOT_DISK no es un dispositivo de bloque válido.${RESET}"
+      ROOT_DISK=""
+    fi
+  done
+
+  # Seleccionar discos para ZFS (opcional)
+  echo
+  echo -e "${CYAN}🔎 Discos adicionales detectados (candidatos para ZFS):${RESET}"
+  lsblk -dpno NAME,SIZE,MODEL | grep -E '/dev/(sd|vd|nvme|mmcblk)' | grep -v "^$ROOT_DISK" || true
+  echo
+  read -rp "➡ Discos para ZFS separados por espacio (vacío para ninguno, ej: /dev/sdb /dev/sdc): " ZFS_LINE || true
+  if [[ -n "${ZFS_LINE:-}" ]]; then
+    # shellcheck disable=SC2206
+    ZFS_DISKS=($ZFS_LINE)
+    for d in "${ZFS_DISKS[@]}"; do
+      if [[ ! -b "$d" ]]; then
+        echo -e "${RED}❌ $d no es un dispositivo de bloque válido. Revisa la lista.${RESET}"
+        exit 1
+      fi
+    done
+  fi
+
+  echo
+  # Usuario
+  while [[ -z "${USERNAME}" ]]; do
+    read -rp "➡ Nombre de usuario a crear (ej: lara, archuser): " USERNAME
+    [[ -z "$USERNAME" ]] && echo -e "${RED}❌ El nombre de usuario no puede estar vacío.${RESET}"
+  done
+
+  echo
+  echo -e "${GREEN}Resumen de selección:${RESET}"
+  echo -e "  🔹 Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
+  echo -e "  🔹 Discos ZFS: ${CYAN}${ZFS_DISKS[*]:-(ninguno)}${RESET}"
+  echo -e "  🔹 Usuario:    ${CYAN}${USERNAME}${RESET}"
+
+  echo
+  echo -e "${RED}⚠ ATENCIÓN: SE VAN A DESTRUIR LOS DATOS EN ESTOS DISPOSITIVOS:${RESET}"
+  echo -e "  • Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
+  if (( ${#ZFS_DISKS[@]} > 0 )); then
+    echo -e "  • Discos ZFS: ${CYAN}${ZFS_DISKS[*]}${RESET}"
+  else
+    echo -e "  • Discos ZFS: (ninguno, no se tocará ningún disco adicional)${RESET}"
+  fi
+  echo -e "${YELLOW}Esta operación es irreversible. Asegúrate de tener backups.${RESET}"
+  read -rp "Escribe exactamente 'BORRAR' para continuar o cualquier otra cosa para salir: " CONFIRM
+  if [[ "$CONFIRM" != "BORRAR" ]]; then
+    echo -e "${RED}❌ Confirmación incorrecta. Abortando instalación.${RESET}"
+    exit 1
+  fi
+
+  pausa
+}
+
 # 🔹 Fase 1 - Preinstall
 function fase_preinstall() {
   header "FASE 1 - PRE-INSTALL Y RED"
@@ -56,14 +128,30 @@ function fase_preinstall() {
 # 🔹 Fase 2 - Particiones y cifrado
 function fase_particiones_cifrado() {
   header "FASE 2 - PARTICIONES Y CIFRADO"
-  # IMPORTANTE: La contraseña que introduzcas aquí para /dev/sda2 será la que deberás usar al arrancar el sistema (GRUB la pedirá).
-  retry cfdisk /dev/sda
-  retry mkfs.vfat -F32 /dev/sda1
+  echo -e "${YELLOW}⚠ Se va a particionar y cifrar ${ROOT_DISK} para el sistema raíz.${RESET}"
+  echo -e "${YELLOW}   Todas las particiones existentes en ese disco serán reemplazadas.${RESET}"
+  pausa
 
-  # Aquí se te pedirá que introduzcas una contraseña para el cifrado de /dev/sda2.
-  # GUARDA esa contraseña, ya que será necesaria cada vez que arranques el sistema.
-  retry cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64 --key-size 512 --iter-time 5000 /dev/sda2
-  retry cryptsetup open /dev/sda2 crypt-root
+  retry cfdisk "$ROOT_DISK"
+
+  # Detectar particiones 1 y 2 tras cfdisk
+  local parts
+  mapfile -t parts < <(lsblk -ln -o NAME,TYPE "$ROOT_DISK" | awk '$2=="part"{print $1}')
+  if (( ${#parts[@]} < 2 )); then
+    echo -e "${RED}❌ Se necesitan al menos 2 particiones (EFI + LUKS root) en ${ROOT_DISK}.${RESET}"
+    exit 1
+  fi
+  BOOT_PART="/dev/${parts[0]}"
+  CRYPT_PART="/dev/${parts[1]}"
+
+  echo -e "${GREEN}➡ Partición EFI detectada: ${BOOT_PART}${RESET}"
+  echo -e "${GREEN}➡ Partición LUKS root detectada: ${CRYPT_PART}${RESET}"
+
+  retry mkfs.vfat -F32 "$BOOT_PART"
+
+  echo -e "${YELLOW}➡ Se cifrará ${CRYPT_PART} (root). Recuerda la contraseña para el arranque.${RESET}"
+  retry cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64 --key-size 512 --iter-time 5000 "$CRYPT_PART"
+  retry cryptsetup open "$CRYPT_PART" crypt-root
 
   retry pvcreate /dev/mapper/crypt-root
   retry vgcreate vol /dev/mapper/crypt-root
@@ -72,56 +160,50 @@ function fase_particiones_cifrado() {
   retry mkswap /dev/mapper/vol-swap
   retry mkfs.ext4 /dev/mapper/vol-root
 
-  # Permitir que cfdisk en sdb y sdc fallen sin abortar el script
-  cfdisk /dev/sdb || echo -e "${YELLOW}⚠️  cfdisk /dev/sdb falló, continuando...${RESET}"
-  cfdisk /dev/sdc || echo -e "${YELLOW}⚠️  cfdisk /dev/sdc falló, continuando...${RESET}"
+  # --- ZFS: particionado y cifrado opcional de discos adicionales ---
+  if (( ${#ZFS_DISKS[@]} > 0 )); then
+    echo -e "${YELLOW}⚠ También se cifrarán y prepararán para ZFS estos discos:${RESET} ${CYAN}${ZFS_DISKS[*]}${RESET}"
+    echo -e "${YELLOW}   Se eliminará cualquier dato previo en ellos.${RESET}"
+    pausa
 
-  # Solo ejecutar cryptsetup si el dispositivo existe
-  if [ -b /dev/sdb ]; then
-    mkdir -p /mnt/etc/luks-keys
-    # Cierra el mapeo si ya existe
-    [ -e /dev/mapper/crypt-zfs1 ] && cryptsetup close crypt-zfs1 || true
-    retry cryptsetup luksFormat --type luks2 /dev/sdb
-    retry cryptsetup open --type luks2 /dev/sdb crypt-zfs1
-    # Esperar a que el mapeo esté disponible
-    for i in {1..5}; do
-      [ -b /dev/mapper/crypt-zfs1 ] && break
-      sleep 1
+    for disk in "${ZFS_DISKS[@]}"; do
+      cfdisk "$disk" || echo -e "${YELLOW}⚠️  cfdisk $disk falló, continuando...${RESET}"
     done
-    if [ ! -b /dev/mapper/crypt-zfs1 ]; then
-      echo -e "${RED}❌ No se pudo mapear /dev/mapper/crypt-zfs1. Abortando...${RESET}"
-      exit 1
-    fi
-    openssl rand -base64 64 > /mnt/etc/luks-keys/sdb.key
-    retry cryptsetup luksAddKey /dev/sdb /mnt/etc/luks-keys/sdb.key
+
+    mkdir -p /mnt/etc/luks-keys
+
+    for idx in "${!ZFS_DISKS[@]}"; do
+      local disk="${ZFS_DISKS[$idx]}"
+      local map_name="crypt-zfs$((idx+1))"
+      local keyfile="/mnt/etc/luks-keys/$(basename "$disk").key"
+
+      echo -e "${CYAN}➡ Preparando disco ZFS ${disk} (${map_name})...${RESET}"
+      [ -e "/dev/mapper/${map_name}" ] && cryptsetup close "$map_name" || true
+
+      retry cryptsetup luksFormat --type luks2 "$disk"
+      retry cryptsetup open --type luks2 "$disk" "$map_name"
+
+      # Esperar a que el mapeo esté disponible
+      for i in {1..5}; do
+        [ -b "/dev/mapper/${map_name}" ] && break
+        sleep 1
+      done
+      if [ ! -b "/dev/mapper/${map_name}" ]; then
+        echo -e "${RED}❌ No se pudo mapear /dev/mapper/${map_name}. Abortando...${RESET}"
+        exit 1
+      fi
+
+      openssl rand -base64 64 > "$keyfile"
+      retry cryptsetup luksAddKey "$disk" "$keyfile"
+      echo -e "${GREEN}✅ Disco ${disk} cifrado y preparado para ZFS.${RESET}"
+    done
   else
-    echo -e "${YELLOW}⚠️  /dev/sdb no existe, saltando cifrado y apertura de /dev/sdb...${RESET}"
+    echo -e "${YELLOW}ℹ No se seleccionaron discos ZFS. ZFS se podrá configurar más adelante.${RESET}"
   fi
 
-  if [ -b /dev/sdc ]; then
-    mkdir -p /mnt/etc/luks-keys
-    # Cierra el mapeo si ya existe
-    [ -e /dev/mapper/crypt-zfs2 ] && cryptsetup close crypt-zfs2 || true
-    retry cryptsetup luksFormat --type luks2 /dev/sdc
-    retry cryptsetup open --type luks2 /dev/sdc crypt-zfs2
-    # Esperar a que el mapeo esté disponible
-    for i in {1..5}; do
-      [ -b /dev/mapper/crypt-zfs2 ] && break
-      sleep 1
-    done
-    if [ ! -b /dev/mapper/crypt-zfs2 ]; then
-      echo -e "${RED}❌ No se pudo mapear /dev/mapper/crypt-zfs2. Abortando...${RESET}"
-      exit 1
-    fi
-    openssl rand -base64 64 > /mnt/etc/luks-keys/sdc.key
-    retry cryptsetup luksAddKey /dev/sdc /mnt/etc/luks-keys/sdc.key
-  else
-    echo -e "${YELLOW}⚠️  /dev/sdc no existe, saltando cifrado y apertura de /dev/sdc...${RESET}"
-  fi
-
-  mkdir -p /mnt/etc/luks-keys  # <-- Esto puede quedarse para root.key, pero ya está creado arriba
+  mkdir -p /mnt/etc/luks-keys
   openssl rand -base64 64 > /mnt/etc/luks-keys/root.key
-  retry cryptsetup luksAddKey /dev/sda2 /mnt/etc/luks-keys/root.key
+  retry cryptsetup luksAddKey "$CRYPT_PART" /mnt/etc/luks-keys/root.key
 
   pausa
 }
@@ -157,7 +239,7 @@ function fase_montaje_sistema() {
   retry mount /dev/mapper/vol-root /mnt
   retry swapon /dev/mapper/vol-swap
   mkdir -p /mnt/boot/efi
-  retry mount /dev/sda1 /mnt/boot/efi
+  retry mount "$BOOT_PART" /mnt/boot/efi
 
   retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
 
@@ -190,14 +272,13 @@ function fase_montaje_sistema() {
     echo -e "${RED}❌ El mapeo /dev/mapper/crypt-root no existe. Abortando...${RESET}"
     exit 1
   fi
-  UUID_SDA2=$(blkid -s UUID -o value /dev/sda2)
+  UUID_SDA2=$(blkid -s UUID -o value "$CRYPT_PART")
   UUID_MAPPER=$(blkid -s UUID -o value /dev/mapper/vol-root)
   if [[ -z "$UUID_SDA2" || -z "$UUID_MAPPER" ]]; then
-    echo -e "${RED}❌ No se pudo obtener el UUID de /dev/sda2 o /dev/mapper/vol-root. Abortando...${RESET}"
+    echo -e "${RED}❌ No se pudo obtener el UUID de la raíz cifrada. Abortando...${RESET}"
     exit 1
   fi
-  echo -e "${GREEN}UUID de /dev/sda2: $UUID_SDA2${RESET}"
-  echo -e "${GREEN}UUID de /dev/mapper/vol-root: $UUID_MAPPER${RESET}"
+  echo -e "${GREEN}UUID de raíz cifrada detectado correctamente.${RESET}"
 
   echo -e "${CYAN}🔎 Comprobando fstab...${RESET}"
   if ! grep -q "$UUID_MAPPER" /mnt/etc/fstab; then
@@ -237,8 +318,7 @@ function fase_montaje_sistema() {
 
   # --- Comprobación de crypttab ---
   if [[ -f /mnt/etc/crypttab ]]; then
-    echo -e "${YELLOW}⚠️  /mnt/etc/crypttab existe. Su contenido es:${RESET}"
-    cat /mnt/etc/crypttab
+    echo -e "${YELLOW}ℹ /mnt/etc/crypttab existe. Se utilizará durante el arranque.${RESET}"
   fi
 
   pausa
@@ -248,126 +328,101 @@ function fase_post_install() {
   header "FASE 4 - POST-INSTALL (CHROOT + ZFS)"
   arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect linux-zen"
 
-  arch-chroot /mnt bash -c '
+  arch-chroot /mnt bash -c "
     set -e
     ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
     hwclock --systohc
-    sed -i "s/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
-    sed -i "s/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/" /etc/locale.gen
+    sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+    sed -i 's/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/' /etc/locale.gen
     locale-gen
-    echo "LANG=en_US.UTF-8" > /etc/locale.conf
-    echo "KEYMAP=es" > /etc/vconsole.conf
-    echo "ArchLinux" > /etc/hostname
+    echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+    echo 'KEYMAP=es' > /etc/vconsole.conf
+    echo 'ArchLinux' > /etc/hostname
 
-    # Configuración de teclado español para Xorg
     mkdir -p /etc/X11/xorg.conf.d
     cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
-Section "InputClass"
-    Identifier "system-keyboard"
-    MatchIsKeyboard "on"
-    Option "XkbLayout" "es"
+Section \"InputClass\"
+    Identifier \"system-keyboard\"
+    MatchIsKeyboard \"on\"
+    Option \"XkbLayout\" \"es\"
 EndSection
 EOF
 
-    # Opcional: para compatibilidad con otros DMs
-    echo "XKBLAYOUT=es" > /etc/default/keyboard
+    echo 'XKBLAYOUT=es' > /etc/default/keyboard
 
-    # Asegura que el hook keyboard esté presente antes de filesystems
-    sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 keyboard filesystems fsck)/" /etc/mkinitcpio.conf
+    sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 keyboard filesystems fsck)/' /etc/mkinitcpio.conf
 
     mkinitcpio -P linux-zen
 
-    UUID_ROOT=$(blkid -s UUID -o value /dev/sda2)
-    UUID_MAPPER=$(blkid -s UUID -o value /dev/mapper/vol-root)
+    UUID_ROOT=\$(blkid -s UUID -o value \"$CRYPT_PART\")
+    UUID_MAPPER=\$(blkid -s UUID -o value /dev/mapper/vol-root)
 
-    # Habilitar cryptodisk en grub
-    if ! grep -q "^GRUB_ENABLE_CRYPTODISK=y" /etc/default/grub; then
-      echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
+    if ! grep -q '^GRUB_ENABLE_CRYPTODISK=y' /etc/default/grub; then
+      echo 'GRUB_ENABLE_CRYPTODISK=y' >> /etc/default/grub
     fi
 
-    # Habilitar getty en tty1 para asegurar login en consola
     systemctl enable getty@tty1.service
 
-    # Forzar arranque en modo texto y consola y teclado español
-    sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID_ROOT:cryptroot root=UUID=$UUID_MAPPER console=tty1 vconsole.keymap=es\"|" /etc/default/grub
+    sed -i \"s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\\\"cryptdevice=UUID=\$UUID_ROOT:cryptroot root=UUID=\$UUID_MAPPER console=tty1 vconsole.keymap=es\\\"|\" /etc/default/grub
 
     grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
     grub-mkconfig -o /boot/grub/grub.cfg
 
-    # Regenerar initramfs tras cambios en HOOKS
     mkinitcpio -P linux-zen
 
     systemctl enable NetworkManager
-  '
+  "
 
   pausa
 }
 
 function fase_hardening_gui() {
   header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
-  arch-chroot /mnt bash -c '
+  arch-chroot /mnt bash -c "
     set -e
-    # Crear grupo realtime si no existe (dentro del chroot)
     if ! getent group realtime > /dev/null; then
       groupadd -r realtime
     fi
 
-    # Contraseña root con reintentos
-    until passwd; do echo "❗ Contraseña incorrecta. Intenta de nuevo."; done
-    # Usuario admin
-    useradd -m -G wheel,audio,realtime -s /bin/bash LaraCanBurn
-    until passwd LaraCanBurn; do echo "❗ Contraseña incorrecta para LaraCanBurn. Intenta de nuevo."; done
+    until passwd; do echo '❗ Contraseña incorrecta. Intenta de nuevo.'; done
+
+    useradd -m -G wheel,audio,realtime -s /bin/bash '$USERNAME'
+    until passwd '$USERNAME'; do echo '❗ Contraseña incorrecta para $USERNAME. Intenta de nuevo.'; done
     EDITOR=nano visudo
 
-    # Instalación de entorno gráfico, drivers, utilidades y audio, y open-vm-tools
-    for try in $(seq 1 3); do
+    for try in \$(seq 1 3); do
       pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa xf86-input-vmmouse lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pulseaudio-alsa pavucontrol open-vm-tools && break
-      echo "❗ Error instalando paquetes. Reintentando (\$try/3)..."
+      echo '❗ Error instalando paquetes. Reintentando ('$try'/3)...'
       sleep 2
-      if [[ \$try -eq 3 ]]; then echo "❌ Fallo persistente en instalación de paquetes. Abortando..."; exit 1; fi
+      if [[ \$try -eq 3 ]]; then echo '❌ Fallo persistente en instalación de paquetes. Abortando...'; exit 1; fi
     done
 
-    # Habilitar servicios de VMware Tools
     systemctl enable vmtoolsd.service
     systemctl enable vmware-vmblock-fuse
 
-    # Autostart del redimensionado automático en XFCE (para usuario LaraCanBurn)
-    mkdir -p /home/LaraCanBurn/.config/autostart
-    cat > /home/LaraCanBurn/.config/autostart/vmware-user.desktop <<EOF
+    mkdir -p /home/$USERNAME/.config/autostart
+    cat > /home/$USERNAME/.config/autostart/vmware-user.desktop <<EOF
 [Desktop Entry]
 Type=Application
 Name=VMware User Agent
 Exec=vmware-user
 X-GNOME-Autostart-enabled=true
 EOF
-    chown -R LaraCanBurn: /home/LaraCanBurn/.config
+    chown -R $USERNAME: /home/$USERNAME/.config
 
-    # Configuración básica de ALSA: volumen por defecto y sin mute
     amixer sset Master unmute || true
     amixer sset Master 80% || true
     amixer sset PCM unmute || true
     amixer sset PCM 80% || true
-
-    # Crear configuración persistente de ALSA
     alsactl store
 
-    # Eliminar arranque global de PulseAudio (no recomendado en Arch)
-    systemctl --global disable pulseaudio || true
-    systemctl --global stop pulseaudio || true
-
-    # Habilitar y arrancar PulseAudio solo para el usuario (esto lo hará XFCE automáticamente)
-    # systemctl --user enable pulseaudio || true
-    # systemctl --user start pulseaudio || true
-
-    # Deshabilitar IPv6 en UFW para evitar errores si el módulo no está disponible
-    sed -i "s/^IPV6=.*/IPV6=no/" /etc/default/ufw
+    sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw
 
     systemctl enable lightdm
     systemctl enable ufw
     ufw enable
 
-    # Habilitar altavoz del sistema (pcspkr)
-    echo "pcspkr" > /etc/modules-load.d/pcspkr.conf
+    echo 'pcspkr' > /etc/modules-load.d/pcspkr.conf
     modprobe pcspkr || true
 
     cat > /etc/systemd/system/clear-cache.service <<SERV
@@ -379,19 +434,22 @@ Before=shutdown.target
 [Service]
 Type=oneshot
 ExecStart=/bin/sync
-ExecStart=/bin/sh -c "echo 3 > /proc/sys/vm/drop_caches"
+ExecStart=/bin/sh -c \"echo 3 > /proc/sys/vm/drop_caches\"
 
 [Install]
 WantedBy=shutdown.target
 SERV
 
     systemctl enable clear-cache.service
-  '
+  "
 
   pausa
 }
+
 #### 🧩 EJECUCIÓN FINAL ####
 header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
+
+seleccionar_discos_y_usuario
 fase_preinstall
 fase_particiones_cifrado
 fase_montaje_sistema
@@ -401,28 +459,12 @@ fase_hardening_gui
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
 
-# Habilitar LightDM para que el entorno gráfico se inicie automáticamente tras el reinicio
 arch-chroot /mnt systemctl enable lightdm
-
-# Establecer graphical.target como objetivo por defecto
 arch-chroot /mnt systemctl set-default graphical.target
 
-# Elimina cualquier arranque global de PulseAudio (NO poner esto aquí)
-# arch-chroot /mnt systemctl --global enable pulseaudio
-# arch-chroot /mnt systemctl --global start pulseaudio
-
-# swapoff -a || true
 umount -R /mnt || true
 
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
 echo -e "${YELLOW}El sistema se reiniciará en 5 segundos...${RESET}"
 sleep 5
-reboot
-sleep 5
-reboot
-reboot
-sleep 5
-reboot
-reboot
-reboot
 reboot

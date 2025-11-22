@@ -24,8 +24,14 @@ RESET='\033[0m'
 # CONFIG GLOBAL
 # =====================
 
+# En RAID_LEVEL puedes poner:
+#   mirror → espejado (2 discos mínimos, 2, 3, 4… por vdev mirror)
+#   raidz1 → equivalente a RAID5 (mínimo 3 discos en ese vdev)
+#   raidz2 → equivalente a RAID6 (mínimo 4 discos)
+#   raidz3 → triple paridad (mínimo 5 discos)
+
 POOL_NAME="zdata"
-RAID_LEVEL="raidz1"            # raidz1, raidz2, raidz3, mirror
+RAID_LEVEL="mirror"            # raidz1, raidz2, raidz3, mirror
 DISKS=("/dev/sdb" "/dev/sdc")  # ajusta según tu hardware / VM
 KEY_DIR="/etc/luks-keys"
 DATASETS=(home var srv tmp root)
@@ -153,16 +159,37 @@ for dev in "${DISKS[@]}"; do
 
   if cryptsetup isLuks "$dev" >/dev/null 2>&1; then
     warn "$dev ya está cifrado con LUKS, no se reformatea."
+
+    # Si no existe keyfile, lo creamos y lo añadimos como nueva clave
+    if [ ! -f "$keyfile" ]; then
+      log "No existe keyfile para ${dev}. Creando y añadiendo a LUKS (se pedirá la passphrase actual)."
+      run dd if=/dev/random of="$keyfile" bs=1 count=64 status=none
+      run chmod 600 "$keyfile"
+      # Esto pedirá la *passphrase actual* del volumen una sola vez
+      run cryptsetup luksAddKey "$dev" "$keyfile"
+      success "Keyfile añadido a LUKS en ${dev}."
+    else
+      log "Keyfile ${keyfile} ya existe. Se usará para abrir el volumen."
+    fi
   else
-    log "Creando LUKS en ${dev}"
+    log "Creando LUKS2 + AES-XTS 512 + Argon2id endurecido en ${dev}"
     run dd if=/dev/random of="$keyfile" bs=1 count=64 status=none
     run chmod 600 "$keyfile"
-    run cryptsetup luksFormat "$dev" "$keyfile" --type luks2 --batch-mode
-    success "LUKS creado en ${dev}"
+    run cryptsetup luksFormat \
+      --type luks2 \
+      --cipher aes-xts-plain64 \
+      --key-size 512 \
+      --pbkdf argon2id \
+      --pbkdf-memory 262144 \
+      --pbkdf-parallel 4 \
+      --iter-time 5000 \
+      "$dev" "$keyfile"
+    success "LUKS2 creado en ${dev} con Argon2id."
   fi
 
+  # Ahora intentamos abrir siempre con keyfile (ya existente o recién añadido)
   if ! cryptsetup status "$name" >/dev/null 2>&1; then
-    log "Abriendo ${dev} como ${name}"
+    log "Abriendo ${dev} como ${name} usando keyfile."
     run cryptsetup open "$dev" "$name" --key-file "$keyfile"
     success "Mapa ${name} abierto."
   else
