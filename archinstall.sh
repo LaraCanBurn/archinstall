@@ -10,325 +10,350 @@ CYAN='\033[36m'
 RESET='\033[0m'
 
 # Variables globales dinámicas
-ROOT_DISK=""      # Disco donde se instala el sistema (ej: /dev/sda, /dev/nvme0n1)
-BOOT_PART=""      # Partición EFI (ej: /dev/sda1, /dev/nvme0n1p1)
-CRYPT_PART=""     # Partición LUKS raíz (ej: /dev/sda2, /dev/nvme0n1p2)
-ZFS_DISKS=()      # Array de discos para ZFS (ej: /dev/sdb /dev/sdc)
-USERNAME=""       # Usuario que se creará
+ROOT_DISK=""  # Disco donde se instala el sistema (ej: /dev/sda, /dev/nvme0n1)
+BOOT_PART=""  # Partición EFI (ej: /dev/sda1, /dev/nvme0n1p1)
+CRYPT_PART="" # Partición LUKS raíz (ej: /dev/sda2, /dev/nvme0n1p2)
+ZFS_DISKS=()  # Array de discos para ZFS (ej: /dev/sdb /dev/sdc)
+USERNAME=""   # Usuario que se creará
 
 # 🔁 Función para reintentos de comandos
 function retry() {
-  local n=1
-  local max=3
-  local delay=2
-  while true; do
-    "$@" && break || {
-      if [[ $n -lt $max ]]; then
-        ((n++))
-        echo -e "${YELLOW}❗ Error ejecutando '$*'. Reintento $n/$max en $delay s...${RESET}"
-        sleep $delay
-      else
-        echo -e "${RED}❌ Error persistente tras $max intentos. Abortando...${RESET}"
-        exit 1
-      fi
-    }
-  done
+	local n=1
+	local max=3
+	local delay=2
+	while true; do
+		"$@" && break || {
+			if [[ $n -lt $max ]]; then
+				((n++))
+				echo -e "${YELLOW}❗ Error ejecutando '$*'. Reintento $n/$max en $delay s...${RESET}"
+				sleep $delay
+			else
+				echo -e "${RED}❌ Error persistente tras $max intentos. Abortando...${RESET}"
+				exit 1
+			fi
+		}
+	done
 }
 
 # 🕹️ Utilidad visual
 function header() {
-  echo -e "${CYAN}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo -e "🛡️  ${1}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo -e "${RESET}"
+	echo -e "${CYAN}"
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	echo -e "🛡️  ${1}"
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	echo -e "${RESET}"
 }
 
 function pausa() {
-  echo -e "${YELLOW}✅ Fase completada. Pulsa Enter para continuar...${RESET}"
-  read
+	echo -e "${YELLOW}✅ Fase completada. Pulsa Enter para continuar...${RESET}"
+	read
 }
 
 # 🔍 Selección de discos y usuario
 function seleccionar_discos_y_usuario() {
-  header "SELECCIÓN DE DISCO Y USUARIO"
+	header "SELECCIÓN DE DISCO Y USUARIO"
 
-  echo -e "${CYAN}🔎 Discos disponibles:${RESET}"
-  lsblk -dpno NAME,SIZE,MODEL | grep -E '/dev/(sd|vd|nvme|mmcblk)' || true
-  echo
+	echo -e "${CYAN}🔎 Discos disponibles:${RESET}"
+	lsblk -dpno NAME,SIZE,MODEL | grep -E '/dev/(sd|vd|nvme|mmcblk)' || true
+	echo
 
-  # Seleccionar disco raíz
-  while [[ -z "${ROOT_DISK}" ]]; do
-    read -rp "➡ Introduce el disco para instalar Arch (ej: /dev/sda, /dev/nvme0n1): " ROOT_DISK
-    if [[ ! -b "$ROOT_DISK" ]]; then
-      echo -e "${RED}❌ $ROOT_DISK no es un dispositivo de bloque válido.${RESET}"
-      ROOT_DISK=""
-    fi
-  done
+	# Seleccionar disco raíz
+	while [[ -z "${ROOT_DISK}" ]]; do
+		read -rp "➡ Introduce el disco para instalar Arch (ej: /dev/sda, /dev/nvme0n1): " ROOT_DISK
+		if [[ ! -b "$ROOT_DISK" ]]; then
+			echo -e "${RED}❌ $ROOT_DISK no es un dispositivo de bloque válido.${RESET}"
+			ROOT_DISK=""
+		fi
+	done
 
-  # Seleccionar discos para ZFS (opcional)
-  echo
-  echo -e "${CYAN}🔎 Discos adicionales detectados (candidatos para ZFS):${RESET}"
-  lsblk -dpno NAME,SIZE,MODEL | grep -E '/dev/(sd|vd|nvme|mmcblk)' | grep -v "^$ROOT_DISK" || true
-  echo
-  read -rp "➡ Discos para ZFS separados por espacio (vacío para ninguno, ej: /dev/sdb /dev/sdc): " ZFS_LINE || true
-  if [[ -n "${ZFS_LINE:-}" ]]; then
-    # shellcheck disable=SC2206
-    ZFS_DISKS=($ZFS_LINE)
-    for d in "${ZFS_DISKS[@]}"; do
-      if [[ ! -b "$d" ]]; then
-        echo -e "${RED}❌ $d no es un dispositivo de bloque válido. Revisa la lista.${RESET}"
-        exit 1
-      fi
-    done
-  fi
+	# Seleccionar discos para ZFS (opcional)
+	echo
+	echo -e "${CYAN}🔎 Discos adicionales detectados (candidatos para ZFS):${RESET}"
+	lsblk -dpno NAME,SIZE,MODEL | grep -E '/dev/(sd|vd|nvme|mmcblk)' | grep -v "^$ROOT_DISK" || true
+	echo
+	read -rp "➡ Discos para ZFS separados por espacio (vacío para ninguno, ej: /dev/sdb /dev/sdc): " ZFS_LINE || true
+	if [[ -n "${ZFS_LINE:-}" ]]; then
+		# shellcheck disable=SC2206
+		ZFS_DISKS=($ZFS_LINE)
+		for d in "${ZFS_DISKS[@]}"; do
+			if [[ ! -b "$d" ]]; then
+				echo -e "${RED}❌ $d no es un dispositivo de bloque válido. Revisa la lista.${RESET}"
+				exit 1
+			fi
+		done
+	fi
 
-  echo
-  # Usuario
-  while [[ -z "${USERNAME}" ]]; do
-    read -rp "➡ Nombre de usuario a crear (ej: lara, archuser): " USERNAME
-    [[ -z "$USERNAME" ]] && echo -e "${RED}❌ El nombre de usuario no puede estar vacío.${RESET}"
-  done
+	echo
+	# Usuario
+	while [[ -z "${USERNAME}" ]]; do
+		read -rp "➡ Nombre de usuario a crear (ej: lara, archuser): " USERNAME
+		[[ -z "$USERNAME" ]] && echo -e "${RED}❌ El nombre de usuario no puede estar vacío.${RESET}"
+	done
 
-  echo
-  echo -e "${GREEN}Resumen de selección:${RESET}"
-  echo -e "  🔹 Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
-  echo -e "  🔹 Discos ZFS: ${CYAN}${ZFS_DISKS[*]:-(ninguno)}${RESET}"
-  echo -e "  🔹 Usuario:    ${CYAN}${USERNAME}${RESET}"
+	echo
+	echo -e "${GREEN}Resumen de selección:${RESET}"
+	echo -e "  🔹 Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
+	echo -e "  🔹 Discos ZFS: ${CYAN}${ZFS_DISKS[*]:-(ninguno)}${RESET}"
+	echo -e "  🔹 Usuario:    ${CYAN}${USERNAME}${RESET}"
 
-  echo
-  echo -e "${RED}⚠ ATENCIÓN: SE VAN A DESTRUIR LOS DATOS EN ESTOS DISPOSITIVOS:${RESET}"
-  echo -e "  • Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
-  if (( ${#ZFS_DISKS[@]} > 0 )); then
-    echo -e "  • Discos ZFS: ${CYAN}${ZFS_DISKS[*]}${RESET}"
-  else
-    echo -e "  • Discos ZFS: (ninguno, no se tocará ningún disco adicional)${RESET}"
-  fi
-  echo -e "${YELLOW}Esta operación es irreversible. Asegúrate de tener backups.${RESET}"
-  read -rp "Escribe exactamente 'BORRAR' para continuar o cualquier otra cosa para salir: " CONFIRM
-  if [[ "$CONFIRM" != "BORRAR" ]]; then
-    echo -e "${RED}❌ Confirmación incorrecta. Abortando instalación.${RESET}"
-    exit 1
-  fi
+	echo
+	echo -e "${RED}⚠ ATENCIÓN: SE VAN A DESTRUIR LOS DATOS EN ESTOS DISPOSITIVOS:${RESET}"
+	echo -e "  • Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
+	if ((${#ZFS_DISKS[@]} > 0)); then
+		echo -e "  • Discos ZFS: ${CYAN}${ZFS_DISKS[*]}${RESET}"
+	else
+		echo -e "  • Discos ZFS: (ninguno, no se tocará ningún disco adicional)${RESET}"
+	fi
+	echo -e "${YELLOW}Esta operación es irreversible. Asegúrate de tener backups.${RESET}"
+	read -rp "Escribe exactamente 'BORRAR' para continuar o cualquier otra cosa para salir: " CONFIRM
+	if [[ "$CONFIRM" != "BORRAR" ]]; then
+		echo -e "${RED}❌ Confirmación incorrecta. Abortando instalación.${RESET}"
+		exit 1
+	fi
 
-  pausa
+	pausa
 }
 
 # 🔹 Fase 1 - Preinstall
 function fase_preinstall() {
-  header "FASE 1 - PRE-INSTALL Y RED"
-  loadkeys es
-  echo -e "${GREEN}➡ Verificando UEFI...${RESET}"
-  ls /sys/firmware/efi/efivars || { echo -e "${RED}❌ UEFI NO detectado. Abortando...${RESET}"; exit 1; }
-  echo -e "${GREEN}➡ Verificando conexión...${RESET}"
-  retry ping -c 1 archlinux.org
-  pausa
+	header "FASE 1 - PRE-INSTALL Y RED"
+	loadkeys es
+	echo -e "${GREEN}➡ Verificando UEFI...${RESET}"
+	ls /sys/firmware/efi/efivars || {
+		echo -e "${RED}❌ UEFI NO detectado. Abortando...${RESET}"
+		exit 1
+	}
+	echo -e "${GREEN}➡ Verificando conexión...${RESET}"
+	retry ping -c 1 archlinux.org
+	pausa
 }
 
 # 🔹 Fase 2 - Particiones y cifrado
 function fase_particiones_cifrado() {
-  header "FASE 2 - PARTICIONES Y CIFRADO"
-  echo -e "${YELLOW}⚠ Se va a particionar y cifrar ${ROOT_DISK} para el sistema raíz.${RESET}"
-  echo -e "${YELLOW}   Todas las particiones existentes en ese disco serán reemplazadas.${RESET}"
-  pausa
+	header "FASE 2 - PARTICIONES Y CIFRADO"
+	echo -e "${YELLOW}⚠ Se va a particionar y cifrar ${ROOT_DISK} para el sistema raíz.${RESET}"
+	echo -e "${YELLOW}   Todas las particiones existentes en ese disco serán reemplazadas.${RESET}"
+	pausa
 
-  retry cfdisk "$ROOT_DISK"
+	retry cfdisk "$ROOT_DISK"
 
-  # Detectar particiones 1 y 2 tras cfdisk
-  local parts
-  mapfile -t parts < <(lsblk -ln -o NAME,TYPE "$ROOT_DISK" | awk '$2=="part"{print $1}')
-  if (( ${#parts[@]} < 2 )); then
-    echo -e "${RED}❌ Se necesitan al menos 2 particiones (EFI + LUKS root) en ${ROOT_DISK}.${RESET}"
-    exit 1
-  fi
-  BOOT_PART="/dev/${parts[0]}"
-  CRYPT_PART="/dev/${parts[1]}"
+	echo -e "${CYAN}🔄 Actualizando tabla de particiones...${RESET}"
 
-  echo -e "${GREEN}➡ Partición EFI detectada: ${BOOT_PART}${RESET}"
-  echo -e "${GREEN}➡ Partición LUKS root detectada: ${CRYPT_PART}${RESET}"
+	# 🔧 FIX CRÍTICO: refresco del kernel + espera
+	sleep 2
+	partprobe "$ROOT_DISK" 2>/dev/null || true
+	udevadm settle
+	sleep 2
 
-  retry mkfs.vfat -F32 "$BOOT_PART"
+	echo -e "${CYAN}🔍 Detectando particiones...${RESET}"
 
-  echo -e "${YELLOW}➡ Se cifrará ${CRYPT_PART} (root). Recuerda la contraseña para el arranque.${RESET}"
-  retry cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64 --key-size 512 --iter-time 5000 "$CRYPT_PART"
-  retry cryptsetup open "$CRYPT_PART" crypt-root
+	local parts
+	for i in {1..10}; do
+		mapfile -t parts < <(lsblk -ln -o NAME,TYPE "$ROOT_DISK" | awk '$2=="part"{print $1}')
 
-  retry pvcreate /dev/mapper/crypt-root
-  retry vgcreate vol /dev/mapper/crypt-root
-  retry lvcreate -n swap -L 8G vol
-  retry lvcreate -l +100%FREE vol -n root
-  retry mkswap /dev/mapper/vol-swap
-  retry mkfs.ext4 /dev/mapper/vol-root
+		if ((${#parts[@]} >= 2)); then
+			break
+		fi
 
-  # --- ZFS: particionado y cifrado opcional de discos adicionales ---
-  if (( ${#ZFS_DISKS[@]} > 0 )); then
-    echo -e "${YELLOW}⚠ También se cifrarán y prepararán para ZFS estos discos:${RESET} ${CYAN}${ZFS_DISKS[*]}${RESET}"
-    echo -e "${YELLOW}   Se eliminará cualquier dato previo en ellos.${RESET}"
-    pausa
+		echo -e "${YELLOW}⏳ Esperando detección de particiones... ($i/10)${RESET}"
+		sleep 1
+	done
 
-    for disk in "${ZFS_DISKS[@]}"; do
-      cfdisk "$disk" || echo -e "${YELLOW}⚠️  cfdisk $disk falló, continuando...${RESET}"
-    done
+	if ((${#parts[@]} < 2)); then
+		echo -e "${RED}❌ No se detectaron las particiones correctamente.${RESET}"
+		echo -e "${YELLOW}💡 Prueba a reiniciar el entorno live y volver a ejecutar.${RESET}"
+		lsblk
+		exit 1
+	fi
 
-    mkdir -p /mnt/etc/luks-keys
+	BOOT_PART="/dev/${parts[0]}"
+	CRYPT_PART="/dev/${parts[1]}"
 
-    for idx in "${!ZFS_DISKS[@]}"; do
-      local disk="${ZFS_DISKS[$idx]}"
-      local map_name="crypt-zfs$((idx+1))"
-      local keyfile="/mnt/etc/luks-keys/$(basename "$disk").key"
+	echo -e "${GREEN}➡ Partición EFI detectada: ${BOOT_PART}${RESET}"
+	echo -e "${GREEN}➡ Partición LUKS root detectada: ${CRYPT_PART}${RESET}"
 
-      echo -e "${CYAN}➡ Preparando disco ZFS ${disk} (${map_name})...${RESET}"
-      [ -e "/dev/mapper/${map_name}" ] && cryptsetup close "$map_name" || true
+	retry mkfs.vfat -F32 "$BOOT_PART"
 
-      retry cryptsetup luksFormat --type luks2 "$disk"
-      retry cryptsetup open --type luks2 "$disk" "$map_name"
+	echo -e "${YELLOW}➡ Se cifrará ${CRYPT_PART} (root). Recuerda la contraseña para el arranque.${RESET}"
+	retry cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64 --key-size 512 --iter-time 5000 "$CRYPT_PART"
+	retry cryptsetup open "$CRYPT_PART" crypt-root
 
-      # Esperar a que el mapeo esté disponible
-      for i in {1..5}; do
-        [ -b "/dev/mapper/${map_name}" ] && break
-        sleep 1
-      done
-      if [ ! -b "/dev/mapper/${map_name}" ]; then
-        echo -e "${RED}❌ No se pudo mapear /dev/mapper/${map_name}. Abortando...${RESET}"
-        exit 1
-      fi
+	retry pvcreate /dev/mapper/crypt-root
+	retry vgcreate vol /dev/mapper/crypt-root
+	retry lvcreate -n swap -L 8G vol
+	retry lvcreate -l +100%FREE vol -n root
+	retry mkswap /dev/mapper/vol-swap
+	retry mkfs.ext4 /dev/mapper/vol-root
 
-      openssl rand -base64 64 > "$keyfile"
-      retry cryptsetup luksAddKey "$disk" "$keyfile"
-      echo -e "${GREEN}✅ Disco ${disk} cifrado y preparado para ZFS.${RESET}"
-    done
-  else
-    echo -e "${YELLOW}ℹ No se seleccionaron discos ZFS. ZFS se podrá configurar más adelante.${RESET}"
-  fi
+	# --- ZFS: particionado y cifrado opcional de discos adicionales ---
+	if ((${#ZFS_DISKS[@]} > 0)); then
+		echo -e "${YELLOW}⚠ También se cifrarán y prepararán para ZFS estos discos:${RESET} ${CYAN}${ZFS_DISKS[*]}${RESET}"
+		echo -e "${YELLOW}   Se eliminará cualquier dato previo en ellos.${RESET}"
+		pausa
 
-  mkdir -p /mnt/etc/luks-keys
-  openssl rand -base64 64 > /mnt/etc/luks-keys/root.key
-  retry cryptsetup luksAddKey "$CRYPT_PART" /mnt/etc/luks-keys/root.key
+		for disk in "${ZFS_DISKS[@]}"; do
+			cfdisk "$disk" || echo -e "${YELLOW}⚠️  cfdisk $disk falló, continuando...${RESET}"
+		done
 
-  pausa
+		mkdir -p /mnt/etc/luks-keys
+
+		for idx in "${!ZFS_DISKS[@]}"; do
+			local disk="${ZFS_DISKS[$idx]}"
+			local map_name="crypt-zfs$((idx + 1))"
+			local keyfile="/mnt/etc/luks-keys/$(basename "$disk").key"
+
+			echo -e "${CYAN}➡ Preparando disco ZFS ${disk} (${map_name})...${RESET}"
+			[ -e "/dev/mapper/${map_name}" ] && cryptsetup close "$map_name" || true
+
+			retry cryptsetup luksFormat --type luks2 "$disk"
+			retry cryptsetup open --type luks2 "$disk" "$map_name"
+
+			# Esperar a que el mapeo esté disponible
+			for i in {1..5}; do
+				[ -b "/dev/mapper/${map_name}" ] && break
+				sleep 1
+			done
+			if [ ! -b "/dev/mapper/${map_name}" ]; then
+				echo -e "${RED}❌ No se pudo mapear /dev/mapper/${map_name}. Abortando...${RESET}"
+				exit 1
+			fi
+
+			openssl rand -base64 64 >"$keyfile"
+			retry cryptsetup luksAddKey "$disk" "$keyfile"
+			echo -e "${GREEN}✅ Disco ${disk} cifrado y preparado para ZFS.${RESET}"
+		done
+	else
+		echo -e "${YELLOW}ℹ No se seleccionaron discos ZFS. ZFS se podrá configurar más adelante.${RESET}"
+	fi
+
+	mkdir -p /mnt/etc/luks-keys
+	openssl rand -base64 64 >/mnt/etc/luks-keys/root.key
+	retry cryptsetup luksAddKey "$CRYPT_PART" /mnt/etc/luks-keys/root.key
+
+	pausa
 }
 
 # 🔧 Instalación de ZFS (post-pacstrap)
 function instalar_zfs_autodetect() {
-  echo -e "${CYAN}🔍 Instalando ZFS DKMS para cualquier kernel...${RESET}"
+	echo -e "${CYAN}🔍 Instalando ZFS DKMS para cualquier kernel...${RESET}"
 
-  if ! grep -q "\[archzfs\]" /etc/pacman.conf; then
-    echo -e "\n[archzfs]\nServer = https://archzfs.com/\$repo/x86_64" >> /etc/pacman.conf
-    pacman-key --recv-keys F75D9D76 --keyserver keyserver.ubuntu.com
-    pacman-key --lsign-key F75D9D76
-    pacman -Sy
-  fi
+	if ! grep -q "\[archzfs\]" /etc/pacman.conf; then
+		echo -e "\n[archzfs]\nServer = https://archzfs.com/\$repo/x86_64" >>/etc/pacman.conf
+		pacman-key --recv-keys F75D9D76 --keyserver keyserver.ubuntu.com
+		pacman-key --lsign-key F75D9D76
+		pacman -Sy
+	fi
 
-  echo -e "${CYAN}📦 Instalando zfs-dkms y zfs-utils...${RESET}"
-  pacman -S --noconfirm zfs-dkms zfs-utils || {
-    echo -e "${YELLOW}⚠️ Fallback a AUR...${RESET}"
-    if command -v paru &>/dev/null; then
-      paru -S --noconfirm zfs-dkms zfs-utils
-    elif command -v yay &>/dev/null; then
-      yay -S --noconfirm zfs-dkms zfs-utils
-    else
-      echo -e "${RED}❌ No se encontró yay/paru.${RESET}"
-      exit 1
-    fi
-  }
-  echo -e "${GREEN}✅ ZFS DKMS instalado correctamente.${RESET}"
+	echo -e "${CYAN}📦 Instalando zfs-dkms y zfs-utils...${RESET}"
+	pacman -S --noconfirm zfs-dkms zfs-utils || {
+		echo -e "${YELLOW}⚠️ Fallback a AUR...${RESET}"
+		if command -v paru &>/dev/null; then
+			paru -S --noconfirm zfs-dkms zfs-utils
+		elif command -v yay &>/dev/null; then
+			yay -S --noconfirm zfs-dkms zfs-utils
+		else
+			echo -e "${RED}❌ No se encontró yay/paru.${RESET}"
+			exit 1
+		fi
+	}
+	echo -e "${GREEN}✅ ZFS DKMS instalado correctamente.${RESET}"
 }
 
 function fase_montaje_sistema() {
-  header "FASE 3 - MONTAJE Y SISTEMA BASE"
-  retry mount /dev/mapper/vol-root /mnt
-  retry swapon /dev/mapper/vol-swap
-  mkdir -p /mnt/boot/efi
-  retry mount "$BOOT_PART" /mnt/boot/efi
+	header "FASE 3 - MONTAJE Y SISTEMA BASE"
+	retry mount /dev/mapper/vol-root /mnt
+	retry swapon /dev/mapper/vol-swap
+	mkdir -p /mnt/boot/efi
+	retry mount "$BOOT_PART" /mnt/boot/efi
 
-  retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
+	retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
 
-  # --- Comprobación de microcode ---
-  echo -e "${CYAN}🔎 Comprobando microcode...${RESET}"
-  CPU_VENDOR=$(lscpu | grep -i 'vendor' | awk '{print $3}' | head -n1)
-  if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
-    if ! pacman -Qq intel-ucode &>/dev/null; then
-      echo -e "${YELLOW}⚠️  Instalando intel-ucode...${RESET}"
-      pacman -Sy --noconfirm intel-ucode
-    fi
-    MICROCODE="intel-ucode.img"
-  elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
-    if ! pacman -Qq amd-ucode &>/dev/null; then
-      echo -e "${YELLOW}⚠️  Instalando amd-ucode...${RESET}"
-      pacman -Sy --noconfirm amd-ucode
-    fi
-    MICROCODE="amd-ucode.img"
-  else
-    MICROCODE=""
-  fi
+	# --- Comprobación de microcode ---
+	echo -e "${CYAN}🔎 Comprobando microcode...${RESET}"
+	CPU_VENDOR=$(lscpu | grep -i 'vendor' | awk '{print $3}' | head -n1)
+	if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
+		if ! pacman -Qq intel-ucode &>/dev/null; then
+			echo -e "${YELLOW}⚠️  Instalando intel-ucode...${RESET}"
+			pacman -Sy --noconfirm intel-ucode
+		fi
+		MICROCODE="intel-ucode.img"
+	elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
+		if ! pacman -Qq amd-ucode &>/dev/null; then
+			echo -e "${YELLOW}⚠️  Instalando amd-ucode...${RESET}"
+			pacman -Sy --noconfirm amd-ucode
+		fi
+		MICROCODE="amd-ucode.img"
+	else
+		MICROCODE=""
+	fi
 
-  retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")
+	retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")
 
-  genfstab -U /mnt > /mnt/etc/fstab
+	genfstab -U /mnt >/mnt/etc/fstab
 
-  # --- Comprobaciones adicionales ---
-  echo -e "${CYAN}🔎 Comprobando mapeo LUKS y UUIDs...${RESET}"
-  if ! ls /dev/mapper/crypt-root &>/dev/null; then
-    echo -e "${RED}❌ El mapeo /dev/mapper/crypt-root no existe. Abortando...${RESET}"
-    exit 1
-  fi
-  UUID_SDA2=$(blkid -s UUID -o value "$CRYPT_PART")
-  UUID_MAPPER=$(blkid -s UUID -o value /dev/mapper/vol-root)
-  if [[ -z "$UUID_SDA2" || -z "$UUID_MAPPER" ]]; then
-    echo -e "${RED}❌ No se pudo obtener el UUID de la raíz cifrada. Abortando...${RESET}"
-    exit 1
-  fi
-  echo -e "${GREEN}UUID de raíz cifrada detectado correctamente.${RESET}"
+	# --- Comprobaciones adicionales ---
+	echo -e "${CYAN}🔎 Comprobando mapeo LUKS y UUIDs...${RESET}"
+	if ! ls /dev/mapper/crypt-root &>/dev/null; then
+		echo -e "${RED}❌ El mapeo /dev/mapper/crypt-root no existe. Abortando...${RESET}"
+		exit 1
+	fi
+	UUID_SDA2=$(blkid -s UUID -o value "$CRYPT_PART")
+	UUID_MAPPER=$(blkid -s UUID -o value /dev/mapper/vol-root)
+	if [[ -z "$UUID_SDA2" || -z "$UUID_MAPPER" ]]; then
+		echo -e "${RED}❌ No se pudo obtener el UUID de la raíz cifrada. Abortando...${RESET}"
+		exit 1
+	fi
+	echo -e "${GREEN}UUID de raíz cifrada detectado correctamente.${RESET}"
 
-  echo -e "${CYAN}🔎 Comprobando fstab...${RESET}"
-  if ! grep -q "$UUID_MAPPER" /mnt/etc/fstab; then
-    echo -e "${RED}❌ El UUID de la raíz no está en /mnt/etc/fstab. Abortando...${RESET}"
-    exit 1
-  fi
-  echo -e "${GREEN}fstab contiene la raíz correctamente.${RESET}"
+	echo -e "${CYAN}🔎 Comprobando fstab...${RESET}"
+	if ! grep -q "$UUID_MAPPER" /mnt/etc/fstab; then
+		echo -e "${RED}❌ El UUID de la raíz no está en /mnt/etc/fstab. Abortando...${RESET}"
+		exit 1
+	fi
+	echo -e "${GREEN}fstab contiene la raíz correctamente.${RESET}"
 
-  # --- Verificación de instalación base, kernel e initramfs ---
-  echo -e "${CYAN}🔎 Comprobando instalación base y archivos críticos...${RESET}"
-  if [[ ! -x /mnt/bin/bash ]]; then
-    echo -e "${RED}❌ /mnt/bin/bash no existe. La instalación base ha fallado. Abortando...${RESET}"
-    exit 1
-  fi
-  if [[ ! -f /mnt/boot/vmlinuz-linux-zen ]]; then
-    echo -e "${RED}❌ /mnt/boot/vmlinuz-linux-zen no existe. El kernel no se ha instalado. Abortando...${RESET}"
-    exit 1
-  fi
-  if [[ ! -f /mnt/boot/initramfs-linux-zen.img ]]; then
-    echo -e "${RED}❌ /mnt/boot/initramfs-linux-zen.img no existe. El initramfs no se ha generado. Abortando...${RESET}"
-    exit 1
-  fi
-  if [[ -n "$MICROCODE" && ! -f /mnt/boot/$MICROCODE ]]; then
-    echo -e "${RED}❌ /mnt/boot/$MICROCODE no existe. El microcode no se ha instalado. Abortando...${RESET}"
-    exit 1
-  fi
-  echo -e "${GREEN}Sistema base, kernel, initramfs y microcode detectados correctamente.${RESET}"
+	# --- Verificación de instalación base, kernel e initramfs ---
+	echo -e "${CYAN}🔎 Comprobando instalación base y archivos críticos...${RESET}"
+	if [[ ! -x /mnt/bin/bash ]]; then
+		echo -e "${RED}❌ /mnt/bin/bash no existe. La instalación base ha fallado. Abortando...${RESET}"
+		exit 1
+	fi
+	if [[ ! -f /mnt/boot/vmlinuz-linux-zen ]]; then
+		echo -e "${RED}❌ /mnt/boot/vmlinuz-linux-zen no existe. El kernel no se ha instalado. Abortando...${RESET}"
+		exit 1
+	fi
+	if [[ ! -f /mnt/boot/initramfs-linux-zen.img ]]; then
+		echo -e "${RED}❌ /mnt/boot/initramfs-linux-zen.img no existe. El initramfs no se ha generado. Abortando...${RESET}"
+		exit 1
+	fi
+	if [[ -n "$MICROCODE" && ! -f /mnt/boot/$MICROCODE ]]; then
+		echo -e "${RED}❌ /mnt/boot/$MICROCODE no existe. El microcode no se ha instalado. Abortando...${RESET}"
+		exit 1
+	fi
+	echo -e "${GREEN}Sistema base, kernel, initramfs y microcode detectados correctamente.${RESET}"
 
-  # --- Comprobación de consola ---
-  echo -e "${CYAN}🔎 Comprobando existencia de consola...${RESET}"
-  if arch-chroot /mnt test ! -c /dev/console; then
-    echo -e "${YELLOW}⚠️  /mnt/dev/console no existe. Creando...${RESET}"
-    arch-chroot /mnt mknod -m 600 /dev/console c 5 1
-  else
-    echo -e "${GREEN}/mnt/dev/console ya existe.${RESET}"
-  fi
+	# --- Comprobación de consola ---
+	echo -e "${CYAN}🔎 Comprobando existencia de consola...${RESET}"
+	if arch-chroot /mnt test ! -c /dev/console; then
+		echo -e "${YELLOW}⚠️  /mnt/dev/console no existe. Creando...${RESET}"
+		arch-chroot /mnt mknod -m 600 /dev/console c 5 1
+	else
+		echo -e "${GREEN}/mnt/dev/console ya existe.${RESET}"
+	fi
 
-  # --- Comprobación de crypttab ---
-  if [[ -f /mnt/etc/crypttab ]]; then
-    echo -e "${YELLOW}ℹ /mnt/etc/crypttab existe. Se utilizará durante el arranque.${RESET}"
-  fi
+	# --- Comprobación de crypttab ---
+	if [[ -f /mnt/etc/crypttab ]]; then
+		echo -e "${YELLOW}ℹ /mnt/etc/crypttab existe. Se utilizará durante el arranque.${RESET}"
+	fi
 
-  pausa
+	pausa
 }
 
 function fase_post_install() {
-  header "FASE 4 - POST-INSTALL (CHROOT + ZFS)"
-  arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect linux-zen"
+	header "FASE 4 - POST-INSTALL (CHROOT + ZFS)"
+	arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect linux-zen"
 
-  arch-chroot /mnt bash -c "
+	arch-chroot /mnt bash -c "
     set -e
     ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
     hwclock --systohc
@@ -373,12 +398,12 @@ EOF
     systemctl enable NetworkManager
   "
 
-  pausa
+	pausa
 }
 
 function fase_hardening_gui() {
-  header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
-  arch-chroot /mnt bash -c "
+	header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
+	arch-chroot /mnt bash -c "
     set -e
     if ! getent group realtime > /dev/null; then
       groupadd -r realtime
@@ -443,7 +468,7 @@ SERV
     systemctl enable clear-cache.service
   "
 
-  pausa
+	pausa
 }
 
 #### 🧩 EJECUCIÓN FINAL ####
