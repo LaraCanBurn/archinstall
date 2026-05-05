@@ -97,16 +97,29 @@ function pacstrap_safe() {
 		echo -e "${CYAN}📊 Espacio disponible tras limpieza:${RESET}"
 		df -h /mnt
 
+		# limpiar caché en live para evitar problemas de espacio o paquetes corruptos
     	echo -e "${YELLOW}🧹 Limpiando caché del live...${RESET}"
     	rm -rf /var/cache/pacman/pkg/* 2>/dev/null || true
 
+		# preparar cache en /mnt para acelerar instalación y evitar problemas de espacio
     	echo -e "${CYAN}📦 Preparando caché en /mnt...${RESET}"
     	mkdir -p /mnt/var/cache/pacman/pkg
 		rm -rf /mnt/var/cache/pacman/pkg/* 2>/dev/null || true
 
+		# inicializar keyring en live para evitar problemas de firma
+		echo -e "${CYAN}🔐 Inicializando keyring (live system)...${RESET}"
+		rm -rf /etc/pacman.d/gnupg 2>/dev/null || true
+		pacman-key --init
+		pacman-key --populate archlinux
+		pacman-key --refresh-keys || true
+		pacman -S --noconfirm archlinux-keyring
+
+		# pacstrap con reintentos inteligentes y verificación post-instalación
 		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
 		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
 		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $MICROCODE"
+
+		echo -e "${CYAN}🔐 Inicializando keyring en /mnt...${RESET}"
 
 		if pacstrap -K /mnt \
   		base linux-zen linux-zen-headers sof-firmware base-devel \
