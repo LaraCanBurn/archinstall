@@ -43,7 +43,11 @@ function pacman_repair() {
 	timedatectl set-ntp true || true
 
 	echo -e "${CYAN}🧹 Limpiando caché corrupta...${RESET}"
+	echo -e "${CYAN}🧹 Limpiando caché host...${RESET}"
 	rm -rf /var/cache/pacman/pkg/*
+
+	echo -e "${CYAN}🧹 Limpiando caché en /mnt...${RESET}"
+	rm -rf /mnt/var/cache/pacman/pkg/* 2>/dev/null || true
 
 	echo -e "${CYAN}🌍 Regenerando mirrors...${RESET}"
 	reflector --verbose --latest 20 --sort rate --save /etc/pacman.d/mirrorlist
@@ -61,10 +65,13 @@ function pacstrap_safe() {
 
 	while true; do
 		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
+		echo -e "${CYAN}📦 Preparando caché de pacman en /mnt...${RESET}"
+		mkdir -p /mnt/var/cache/pacman/pkg
+		rm -rf /mnt/var/cache/pacman/pkg/*
 		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
 		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")"
 
-		if pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}"); then
+		if pacstrap -c /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}"); then
 			echo -e "${GREEN}✅ pacstrap completado correctamente.${RESET}"
 			break
 		else
