@@ -35,6 +35,53 @@ function retry() {
 	done
 }
 
+# 🧠 Gestión inteligente de pacman (auto-reparación + retry seguro)
+function pacman_repair() {
+	echo -e "${YELLOW}🛠 Intentando reparar entorno pacman...${RESET}"
+
+	echo -e "${CYAN}⏰ Sincronizando hora...${RESET}"
+	timedatectl set-ntp true || true
+
+	echo -e "${CYAN}🧹 Limpiando caché corrupta...${RESET}"
+	rm -rf /var/cache/pacman/pkg/*
+
+	echo -e "${CYAN}🌍 Regenerando mirrors...${RESET}"
+	reflector --verbose --latest 20 --sort rate --save /etc/pacman.d/mirrorlist
+
+	echo -e "${CYAN}🔄 Forzando refresh de paquetes...${RESET}"
+	pacman -Syy --noconfirm
+
+	echo -e "${GREEN}✅ Reparación completada.${RESET}"
+}
+
+# 📦 Instalación segura del sistema base (pacstrap con auto-reparación y reintentos inteligentes)
+function pacstrap_safe() {
+	local max=3
+	local n=1
+
+	while true; do
+		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
+		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
+		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")"
+
+		if pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}"); then
+			echo -e "${GREEN}✅ pacstrap completado correctamente.${RESET}"
+			break
+		else
+			echo -e "${YELLOW}⚠️ pacstrap falló.${RESET}"
+
+			if [[ $n -lt $max ]]; then
+				((n++))
+				pacman_repair
+				echo -e "${YELLOW}🔁 Reintentando instalación...${RESET}"
+			else
+				echo -e "${RED}❌ Fallo persistente en pacstrap. Abortando.${RESET}"
+				exit 1
+			fi
+		fi
+	done
+}
+
 # 🕹️ Utilidad visual
 function header() {
 	echo -e "${CYAN}"
@@ -118,6 +165,8 @@ function seleccionar_discos_y_usuario() {
 function fase_preinstall() {
 	header "FASE 1 - PRE-INSTALL Y RED"
 	loadkeys es
+	echo -e "${CYAN}⏰ Sincronizando hora...${RESET}"
+	timedatectl set-ntp true || true
 	echo -e "${GREEN}➡ Verificando UEFI...${RESET}"
 	ls /sys/firmware/efi/efivars || {
 		echo -e "${RED}❌ UEFI NO detectado. Abortando...${RESET}"
@@ -287,7 +336,7 @@ function fase_montaje_sistema() {
 		MICROCODE=""
 	fi
 
-	retry pacstrap /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")
+	pacstrap_safe
 
 	genfstab -U /mnt >/mnt/etc/fstab
 
