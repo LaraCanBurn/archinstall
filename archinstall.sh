@@ -56,6 +56,7 @@ function pacman_repair() {
 	pacman -Syy --noconfirm
 
 	echo -e "${GREEN}✅ Reparación completada.${RESET}"
+
 }
 
 # 📦 Instalación segura del sistema base (pacstrap con auto-reparación y reintentos inteligentes)
@@ -234,12 +235,24 @@ function fase_particiones_cifrado() {
 	retry cryptsetup luksFormat --type luks1 --cipher aes-xts-plain64 --key-size 512 --iter-time 5000 "$CRYPT_PART"
 	retry cryptsetup open "$CRYPT_PART" crypt-root
 
+	echo -e "${CYAN}📊 Tamaño de dispositivo cifrado (crypt-root):${RESET}"
+	lsblk
+
 	retry pvcreate /dev/mapper/crypt-root
 	retry vgcreate vol /dev/mapper/crypt-root
 	retry lvcreate -n swap -L 8G vol
 	retry lvcreate -l +100%FREE vol -n root
 	retry mkswap /dev/mapper/vol-swap
 	retry mkfs.ext4 /dev/mapper/vol-root
+
+	echo -e "${CYAN}📊 Estado de LVM tras creación:${RESET}"
+	lsblk
+	pvs
+	vgs
+	lvs
+
+	echo -e "${CYAN}📊 Verificando tamaño de vol-root:${RESET}"
+	lsblk | grep vol-root || true
 
 	# --- ZFS: particionado y cifrado opcional de discos adicionales ---
 	if ((${#ZFS_DISKS[@]} > 0)); then
@@ -322,6 +335,12 @@ function fase_montaje_sistema() {
 	mkdir -p /mnt/boot/efi
 	retry mount "$BOOT_PART" /mnt/boot/efi
 
+	echo -e "${CYAN}📊 Tamaño de root montado en /mnt:${RESET}"
+	df -h /mnt
+
+	echo -e "${CYAN}📊 Información de bloques (UUIDs y dispositivos):${RESET}"
+	blkid
+
 	retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
 
 	# --- Comprobación de microcode ---
@@ -341,6 +360,17 @@ function fase_montaje_sistema() {
 		MICROCODE="amd-ucode.img"
 	else
 		MICROCODE=""
+	fi
+
+	echo -e "${CYAN}📊 Espacio disponible en /mnt:${RESET}"
+	df -h /mnt
+
+	AVAILABLE=$(df --output=avail -k /mnt | tail -1)
+
+	if ((AVAILABLE < 2000000)); then
+		echo -e "${RED}❌ No hay suficiente espacio en disco para instalar Arch.${RESET}"
+		echo -e "${YELLOW}💡 Se recomienda al menos 2GB libres (mejor 5GB+).${RESET}"
+		exit 1
 	fi
 
 	pacstrap_safe
