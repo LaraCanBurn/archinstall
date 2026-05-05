@@ -75,6 +75,7 @@ function pacstrap_safe() {
 
 		mkfs.ext4 -F /dev/mapper/vol-root
 		mount /dev/mapper/vol-root /mnt
+
 		echo -e "${CYAN}📊 Verificando montaje root:${RESET}"
 		mount | grep /mnt || {
 			echo -e "${RED}❌ /mnt no está montado correctamente${RESET}"
@@ -96,17 +97,28 @@ function pacstrap_safe() {
 		echo -e "${CYAN}📊 Espacio disponible tras limpieza:${RESET}"
 		df -h /mnt
 
-		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
-		echo -e "${CYAN}📦 Preparando caché de pacman en /mnt...${RESET}"
-		mkdir -p /mnt/var/cache/pacman/pkg
-		[ -d /mnt/var/cache/pacman/pkg ] && rm -rf /mnt/var/cache/pacman/pkg/*
-		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
-		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")"
+    	echo -e "${YELLOW}🧹 Limpiando caché del live...${RESET}"
+    	rm -rf /var/cache/pacman/pkg/* 2>/dev/null || true
 
-		if pacstrap -K -c /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}") &&
-			[[ -x /mnt/bin/bash ]] &&
-			[[ -d /mnt/usr ]] &&
-			[[ -d /mnt/etc ]]; then
+    	echo -e "${CYAN}📦 Preparando caché en /mnt...${RESET}"
+    	mkdir -p /mnt/var/cache/pacman/pkg
+		rm -rf /mnt/var/cache/pacman/pkg/* 2>/dev/null || true
+
+		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
+		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
+		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $MICROCODE"
+
+		if pacstrap -K /mnt \
+  		base linux-zen linux-zen-headers sof-firmware base-devel \
+  		grub efibootmgr nano vim networkmanager lvm2 cryptsetup \
+  		$([[ -n "$MICROCODE" ]] && echo "$MICROCODE") \
+  		--cachedir=/mnt/var/cache/pacman/pkg \
+  		&& [[ -x /mnt/bin/bash ]] \
+  		&& [[ -d /mnt/usr ]] \
+  		&& [[ -d /mnt/etc ]] \
+		&& [[ -d /mnt/var ]] \
+		&& [[ -f /mnt/boot/vmlinuz-linux-zen ]] \
+		&& [[ -f /mnt/boot/initramfs-linux-zen.img ]]; then
 			echo -e "${GREEN}✅ pacstrap completado correctamente.${RESET}"
 			break
 		else
@@ -373,22 +385,15 @@ function fase_montaje_sistema() {
 	retry reflector --verbose --latest 10 --sort rate --save /etc/pacman.d/mirrorlist
 
 	# --- Comprobación de microcode ---
-	echo -e "${CYAN}🔎 Comprobando microcode...${RESET}"
+	echo -e "${CYAN}🔎 Detectando microcode...${RESET}"
 	CPU_VENDOR=$(lscpu | grep -i 'vendor' | awk '{print $3}' | head -n1)
+
 	if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
-		if ! pacman -Qq intel-ucode &>/dev/null; then
-			echo -e "${YELLOW}⚠️  Instalando intel-ucode...${RESET}"
-			pacman -Sy --noconfirm intel-ucode
-		fi
-		MICROCODE="intel-ucode.img"
+  		MICROCODE="intel-ucode"
 	elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
-		if ! pacman -Qq amd-ucode &>/dev/null; then
-			echo -e "${YELLOW}⚠️  Instalando amd-ucode...${RESET}"
-			pacman -Sy --noconfirm amd-ucode
-		fi
-		MICROCODE="amd-ucode.img"
+  		MICROCODE="amd-ucode"
 	else
-		MICROCODE=""
+  		MICROCODE=""
 	fi
 
 	pacstrap_safe
