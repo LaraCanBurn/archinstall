@@ -65,6 +65,19 @@ function pacstrap_safe() {
 	local n=1
 
 	while true; do
+		echo -e "${YELLOW}🧹 Reinicializando root antes del intento...${RESET}"
+
+		umount -R /mnt 2>/dev/null || true
+
+		mkfs.ext4 -F /dev/mapper/vol-root
+		mount /dev/mapper/vol-root /mnt
+
+		mkdir -p /mnt/boot/efi
+		mount "$BOOT_PART" /mnt/boot/efi
+
+		echo -e "${CYAN}📊 Espacio disponible tras limpieza:${RESET}"
+		df -h /mnt
+
 		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
 		echo -e "${CYAN}📦 Preparando caché de pacman en /mnt...${RESET}"
 		mkdir -p /mnt/var/cache/pacman/pkg
@@ -72,7 +85,7 @@ function pacstrap_safe() {
 		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
 		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")"
 
-		if pacstrap -c /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}"); then
+		if pacstrap -K -c /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}"); then
 			echo -e "${GREEN}✅ pacstrap completado correctamente.${RESET}"
 			break
 		else
@@ -334,9 +347,6 @@ function fase_montaje_sistema() {
 	retry swapon /dev/mapper/vol-swap
 	mkdir -p /mnt/boot/efi
 	retry mount "$BOOT_PART" /mnt/boot/efi
-
-	echo -e "${CYAN}📊 Tamaño de root montado en /mnt:${RESET}"
-	df -h /mnt
 
 	echo -e "${CYAN}📊 Información de bloques (UUIDs y dispositivos):${RESET}"
 	blkid
