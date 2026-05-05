@@ -71,7 +71,6 @@ function pacstrap_safe() {
 
 		umount -R /mnt 2>/dev/null || true
 		sleep 1
-		fuser -km /mnt 2>/dev/null || true
 		umount -R /mnt 2>/dev/null || true
 
 		mkfs.ext4 -F /dev/mapper/vol-root
