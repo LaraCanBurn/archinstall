@@ -44,7 +44,7 @@ function pacman_repair() {
 
 	echo -e "${CYAN}🧹 Limpiando caché corrupta...${RESET}"
 	echo -e "${CYAN}🧹 Limpiando caché host...${RESET}"
-	rm -rf /var/cache/pacman/pkg/*
+	rm -rf /var/cache/pacman/pkg/* 2>/dev/null || true
 
 	echo -e "${CYAN}🧹 Limpiando caché en /mnt...${RESET}"
 	rm -rf /mnt/var/cache/pacman/pkg/* 2>/dev/null || true
@@ -76,9 +76,23 @@ function pacstrap_safe() {
 
 		mkfs.ext4 -F /dev/mapper/vol-root
 		mount /dev/mapper/vol-root /mnt
+		echo -e "${CYAN}📊 Verificando montaje root:${RESET}"
+		mount | grep /mnt || {
+			echo -e "${RED}❌ /mnt no está montado correctamente${RESET}"
+			exit 1
+		}
 
 		mkdir -p /mnt/boot/efi
-		mount "$BOOT_PART" /mnt/boot/efi
+		mount "$BOOT_PART" /mnt/boot/efi || {
+			echo -e "${RED}❌ Error montando EFI en $BOOT_PART${RESET}"
+			lsblk
+			exit 1
+		}
+
+		mount | grep /mnt/boot/efi || {
+			echo -e "${RED}❌ EFI no está montado correctamente${RESET}"
+			exit 1
+		}
 
 		echo -e "${CYAN}📊 Espacio disponible tras limpieza:${RESET}"
 		df -h /mnt
@@ -86,11 +100,14 @@ function pacstrap_safe() {
 		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
 		echo -e "${CYAN}📦 Preparando caché de pacman en /mnt...${RESET}"
 		mkdir -p /mnt/var/cache/pacman/pkg
-		rm -rf /mnt/var/cache/pacman/pkg/*
+		[ -d /mnt/var/cache/pacman/pkg ] && rm -rf /mnt/var/cache/pacman/pkg/*
 		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
 		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}")"
 
-		if pacstrap -K -c /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}"); then
+		if pacstrap -K -c /mnt base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $([[ -n "$MICROCODE" ]] && echo "${MICROCODE%.img}") &&
+			[[ -x /mnt/bin/bash ]] &&
+			[[ -d /mnt/usr ]] &&
+			[[ -d /mnt/etc ]]; then
 			echo -e "${GREEN}✅ pacstrap completado correctamente.${RESET}"
 			break
 		else
@@ -348,10 +365,8 @@ function instalar_zfs_autodetect() {
 
 function fase_montaje_sistema() {
 	header "FASE 3 - MONTAJE Y SISTEMA BASE"
-	retry mount /dev/mapper/vol-root /mnt
 	retry swapon /dev/mapper/vol-swap
 	mkdir -p /mnt/boot/efi
-	retry mount "$BOOT_PART" /mnt/boot/efi
 
 	echo -e "${CYAN}📊 Información de bloques (UUIDs y dispositivos):${RESET}"
 	blkid
@@ -377,18 +392,26 @@ function fase_montaje_sistema() {
 		MICROCODE=""
 	fi
 
-	echo -e "${CYAN}📊 Espacio disponible en /mnt:${RESET}"
-	df -h /mnt
+	pacstrap_safe
 
-	AVAILABLE=$(df --output=avail -k /mnt | tail -1)
+	echo -e "${CYAN}🔍 Verificando instalación base real...${RESET}"
 
-	if ((AVAILABLE < 2000000)); then
-		echo -e "${RED}❌ No hay suficiente espacio en disco para instalar Arch.${RESET}"
-		echo -e "${YELLOW}💡 Se recomienda al menos 2GB libres (mejor 5GB+).${RESET}"
+	if [[ ! -x /mnt/bin/bash ]]; then
+		echo -e "${RED}❌ Instalación incompleta: falta /bin/bash${RESET}"
 		exit 1
 	fi
 
-	pacstrap_safe
+	if [[ ! -d /mnt/usr ]]; then
+		echo -e "${RED}❌ Instalación incompleta: falta /usr${RESET}"
+		exit 1
+	fi
+
+	if [[ ! -d /mnt/var ]]; then
+		echo -e "${RED}❌ Instalación incompleta: falta /var${RESET}"
+		exit 1
+	fi
+
+	echo -e "${GREEN}✅ Sistema base instalado correctamente.${RESET}"
 
 	genfstab -U /mnt >/mnt/etc/fstab
 
@@ -587,6 +610,11 @@ header "🔄 Desmontando particiones y reiniciando el sistema"
 
 arch-chroot /mnt systemctl enable lightdm
 arch-chroot /mnt systemctl set-default graphical.target
+
+if [[ ! -f /mnt/boot/grub/grub.cfg ]]; then
+	echo -e "${RED}❌ GRUB no generado correctamente${RESET}"
+	exit 1
+fi
 
 umount -R /mnt || true
 
