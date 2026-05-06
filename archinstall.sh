@@ -417,6 +417,16 @@ function fase_montaje_sistema() {
 
 	pacstrap_safe
 
+	if ((${#ZFS_DISKS[@]} > 0)); then
+  	arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect"
+	fi
+	
+	echo -e "${CYAN}⚙️ Configurando mkinitcpio para LUKS + LVM...${RESET}"
+
+	sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/' /mnt/etc/mkinitcpio.conf
+
+	arch-chroot /mnt mkinitcpio -P
+
 	echo -e "${CYAN}🔍 Verificando instalación base real...${RESET}"
 
 	if [[ ! -x /mnt/bin/bash ]]; then
@@ -586,7 +596,7 @@ systemctl enable NetworkManager
 
 # pc speaker
 echo 'pcspkr' > /etc/modules-load.d/pcspkr.conf
-modprobe pcspkr || true
+modprobe pcspkr 2>/dev/null || true
 
 # Servicio limpiar cache
 cat > /etc/systemd/system/clear-cache.service <<'SERV'
@@ -622,19 +632,36 @@ fase_post_install
 # Desmontar particiones y reiniciar el sistema
 header "🧹 Desmontando particiones y reiniciando el sistema"
 
-arch-chroot /mnt systemctl enable lightdm
+# arch-chroot /mnt systemctl enable lightdm
 arch-chroot /mnt systemctl set-default graphical.target
 
 echo -e "${CYAN}🔧 Instalando GRUB...${RESET}"
 
-# Activar soporte LUKS en GRUB
-echo 'GRUB_ENABLE_CRYPTODISK=y' >> /mnt/etc/default/grub
-
-# Verificar EFI
+# Verificar EFI primero
 mount | grep /mnt/boot/efi || {
   echo -e "${RED}❌ EFI no está montado. Abortando...${RESET}"
   exit 1
 }
+
+# 🔐 Configuración de arranque para sistema cifrado (LUKS + LVM)
+echo -e "${CYAN}⚙️ Configurando GRUB para LUKS + LVM...${RESET}"
+
+# Activar soporte LUKS en GRUB
+sed -i 's/^#\?GRUB_ENABLE_CRYPTODISK=.*/GRUB_ENABLE_CRYPTODISK=y/' /mnt/etc/default/grub
+
+# Asegurar que dispositivos están listos
+udevadm settle
+sleep 1
+
+# Obtener UUID del LUKS
+UUID_CRYPT=$(blkid -s UUID -o value "$CRYPT_PART")
+
+# Configurar parámetros del kernel (robusto)
+if grep -q "^GRUB_CMDLINE_LINUX=" /mnt/etc/default/grub; then
+  sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=${UUID_CRYPT}:crypt-root root=/dev/mapper/vol-root quiet loglevel=3\"|" /mnt/etc/default/grub
+else
+  echo "GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=${UUID_CRYPT}:crypt-root root=/dev/mapper/vol-root quiet loglevel=3\"" >> /mnt/etc/default/grub
+fi
 
 # Instalar GRUB
 arch-chroot /mnt grub-install \
@@ -652,7 +679,6 @@ if [[ ! -f /mnt/boot/grub/grub.cfg ]]; then
   echo -e "${RED}❌ GRUB no generado correctamente${RESET}"
   exit 1
 fi
-
 # Desmontar
 umount -R /mnt || true
 
