@@ -473,9 +473,9 @@ function fase_montaje_sistema() {
 		echo -e "${RED}❌ /mnt/boot/initramfs-linux-zen.img no existe. El initramfs no se ha generado. Abortando...${RESET}"
 		exit 1
 	fi
-	if [[ -n "$MICROCODE" && ! -f /mnt/boot/$MICROCODE ]]; then
-		echo -e "${RED}❌ /mnt/boot/$MICROCODE no existe. El microcode no se ha instalado. Abortando...${RESET}"
-		exit 1
+	if [[ -n "$MICROCODE" && ! -f /mnt/boot/${MICROCODE}.img ]]; then
+    	echo -e "${RED}❌ /mnt/boot/${MICROCODE}.img no existe. El microcode no se ha instalado. Abortando...${RESET}"
+    	exit 1
 	fi
 	echo -e "${GREEN}Sistema base, kernel, initramfs y microcode detectados correctamente.${RESET}"
 
