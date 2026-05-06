@@ -109,6 +109,12 @@ function pacstrap_safe() {
 		# inicializar keyring en live para evitar problemas de firma
 		echo -e "${CYAN}🔐 Inicializando keyring (live system)...${RESET}"
 		rm -rf /etc/pacman.d/gnupg 2>/dev/null || true
+		mkdir -p /etc/pacman.d/gnupg
+		chmod 700 /etc/pacman.d/gnupg
+		# asegurar entorno GPG limpio para evitar problemas de firma
+		export GNUPGHOME=/etc/pacman.d/gnupg
+		gpgconf --kill all 2>/dev/null || true
+		gpgconf --launch gpg-agent
 		pacman-key --init
 		pacman-key --populate archlinux
 		pacman-key --refresh-keys || true
