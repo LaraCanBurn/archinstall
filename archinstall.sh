@@ -618,7 +618,6 @@ fase_preinstall
 fase_particiones_cifrado
 fase_montaje_sistema
 fase_post_install
-fase_hardening_gui
 
 # Desmontar particiones y reiniciar el sistema
 header "🔄 Desmontando particiones y reiniciando el sistema"
