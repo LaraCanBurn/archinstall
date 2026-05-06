@@ -627,6 +627,9 @@ arch-chroot /mnt systemctl set-default graphical.target
 
 echo -e "${CYAN}🔧 Instalando GRUB...${RESET}"
 
+# Activar soporte LUKS en GRUB
+echo 'GRUB_ENABLE_CRYPTODISK=y' >> /mnt/etc/default/grub
+
 # Verificar EFI
 mount | grep /mnt/boot/efi || {
   echo -e "${RED}❌ EFI no está montado. Abortando...${RESET}"
