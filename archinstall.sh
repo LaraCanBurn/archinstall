@@ -499,8 +499,10 @@ function fase_montaje_sistema() {
 function fase_post_install() {
 header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
 
-arch-chroot /mnt bash -c "
+arch-chroot /mnt env USERNAME="$USERNAME" bash -c "
 set -euo pipefail
+
+echo \"USERNAME dentro de chroot: \$USERNAME\"
 
 # Grupo realtime
 if ! getent group realtime >/dev/null; then
