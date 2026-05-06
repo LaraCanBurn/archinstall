@@ -497,107 +497,97 @@ function fase_montaje_sistema() {
 }
 
 function fase_post_install() {
-	header "FASE 4 - POST-INSTALL (CHROOT + ZFS)"
-	arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect linux-zen"
+header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
 
-	arch-chroot /mnt bash -c "
-    set -e
-    ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
-    hwclock --systohc
-    sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-    sed -i 's/^#es_ES.UTF-8 UTF-8/es_ES.UTF-8 UTF-8/' /etc/locale.gen
-    locale-gen
-    echo 'LANG=en_US.UTF-8' > /etc/locale.conf
-    echo 'KEYMAP=es' > /etc/vconsole.conf
-    echo 'ArchLinux' > /etc/hostname
+arch-chroot /mnt bash -c "
+set -euo pipefail
 
-    mkdir -p /etc/X11/xorg.conf.d
-    cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
-Section \"InputClass\"
-    Identifier \"system-keyboard\"
-    MatchIsKeyboard \"on\"
-    Option \"XkbLayout\" \"es\"
-EndSection
-EOF
+# Grupo realtime
+if ! getent group realtime >/dev/null; then
+  groupadd -r realtime
+fi
 
-    echo 'XKBLAYOUT=es' > /etc/default/keyboard
+# Password root
+until passwd; do
+  echo '❗ Contraseña incorrecta. Intenta de nuevo.'
+done
 
-    sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 keyboard filesystems fsck)/' /etc/mkinitcpio.conf
+# Usuario
+useradd -m -G wheel,audio,realtime -s /bin/bash \"\$USERNAME\"
 
-    mkinitcpio -P linux-zen
+until passwd \"\$USERNAME\"; do
+  echo '❗ Contraseña incorrecta para \$USERNAME. Intenta de nuevo.'
+done
 
-    UUID_ROOT=\$(blkid -s UUID -o value \"$CRYPT_PART\")
-    UUID_MAPPER=\$(blkid -s UUID -o value /dev/mapper/vol-root)
+# SUDO automático (sin visudo)
+echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/wheel
+chmod 440 /etc/sudoers.d/wheel
 
-    if ! grep -q '^GRUB_ENABLE_CRYPTODISK=y' /etc/default/grub; then
-      echo 'GRUB_ENABLE_CRYPTODISK=y' >> /etc/default/grub
-    fi
+# Instalación de paquetes con reintento
+for i in \$(seq 1 3); do
+  pacman -S --noconfirm \
+    xfce4 xfce4-goodies \
+    xorg xorg-server xorg-apps \
+    mesa xf86-video-vesa xf86-input-vmmouse \
+    lightdm lightdm-gtk-greeter \
+    kitty htop ncdu tree vlc p7zip zip unzip tar git vim \
+    docker python python-pip nodejs npm \
+    ufw gufw fail2ban openssh net-tools iftop timeshift \
+    realtime-privileges \
+    alsa-utils pulseaudio pulseaudio-alsa pavucontrol \
+    open-vm-tools \
+  && break
 
-    systemctl enable getty@tty1.service
+  echo \"❗ Error instalando paquetes. Reintentando (intento \$i/3)...\"
+  sleep 2
 
-    sed -i \"s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\\\"cryptdevice=UUID=\$UUID_ROOT:cryptroot root=UUID=\$UUID_MAPPER console=tty1 vconsole.keymap=es\\\"|\" /etc/default/grub
+  if [[ \$i -eq 3 ]]; then
+    echo \"❌ Fallo persistente en instalación de paquetes. Abortando...\"
+    exit 1
+  fi
+done
 
-    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
-    grub-mkconfig -o /boot/grub/grub.cfg
+# Servicios VMware
+systemctl enable vmtoolsd.service
+systemctl enable vmware-vmblock-fuse
 
-    mkinitcpio -P linux-zen
+# Autostart VMware
+mkdir -p /home/\$USERNAME/.config/autostart
 
-    systemctl enable NetworkManager
-  "
-
-	pausa
-}
-
-function fase_hardening_gui() {
-	header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
-	arch-chroot /mnt bash -c "
-    set -e
-    if ! getent group realtime > /dev/null; then
-      groupadd -r realtime
-    fi
-
-    until passwd; do echo '❗ Contraseña incorrecta. Intenta de nuevo.'; done
-
-    useradd -m -G wheel,audio,realtime -s /bin/bash '$USERNAME'
-    until passwd '$USERNAME'; do echo '❗ Contraseña incorrecta para $USERNAME. Intenta de nuevo.'; done
-    EDITOR=nano visudo
-
-    for try in \$(seq 1 3); do
-      pacman -S --noconfirm xfce4 xfce4-goodies xorg xorg-server xorg-apps mesa xf86-video-vesa xf86-input-vmmouse lightdm lightdm-gtk-greeter kitty htop ncdu tree vlc p7zip zip unzip tar git vim docker python python-pip nodejs npm ufw gufw fail2ban openssh net-tools iftop timeshift realtime-privileges alsa-utils pulseaudio pulseaudio-alsa pavucontrol open-vm-tools && break
-      echo '❗ Error instalando paquetes. Reintentando ('$try'/3)...'
-      sleep 2
-      if [[ \$try -eq 3 ]]; then echo '❌ Fallo persistente en instalación de paquetes. Abortando...'; exit 1; fi
-    done
-
-    systemctl enable vmtoolsd.service
-    systemctl enable vmware-vmblock-fuse
-
-    mkdir -p /home/$USERNAME/.config/autostart
-    cat > /home/$USERNAME/.config/autostart/vmware-user.desktop <<EOF
+cat > /home/\$USERNAME/.config/autostart/vmware-user.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=VMware User Agent
 Exec=vmware-user
 X-GNOME-Autostart-enabled=true
 EOF
-    chown -R $USERNAME: /home/$USERNAME/.config
 
-    amixer sset Master unmute || true
-    amixer sset Master 80% || true
-    amixer sset PCM unmute || true
-    amixer sset PCM 80% || true
-    alsactl store
+chown -R \$USERNAME: /home/\$USERNAME/.config
 
-    sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw
+# Audio
+amixer sset Master unmute || true
+amixer sset Master 80% || true
+amixer sset PCM unmute || true
+amixer sset PCM 80% || true
+alsactl store
 
-    systemctl enable lightdm
-    systemctl enable ufw
-    ufw enable
+# Firewall
+sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw
+systemctl enable ufw
+ufw --force enable
 
-    echo 'pcspkr' > /etc/modules-load.d/pcspkr.conf
-    modprobe pcspkr || true
+# Display manager
+systemctl enable lightdm
 
-    cat > /etc/systemd/system/clear-cache.service <<SERV
+# Habilitación para gestión automática de red (DHCP, WiFi, Ethernet)
+systemctl enable NetworkManager
+
+# pc speaker
+echo 'pcspkr' > /etc/modules-load.d/pcspkr.conf
+modprobe pcspkr || true
+
+# Servicio limpiar cache
+cat > /etc/systemd/system/clear-cache.service <<'SERV'
 [Unit]
 Description=Clear Cache at Shutdown
 DefaultDependencies=no
@@ -612,10 +602,10 @@ ExecStart=/bin/sh -c \"echo 3 > /proc/sys/vm/drop_caches\"
 WantedBy=shutdown.target
 SERV
 
-    systemctl enable clear-cache.service
-  "
+systemctl enable clear-cache.service
+"
 
-	pausa
+pausa
 }
 
 #### 🧩 EJECUCIÓN FINAL ####
