@@ -620,16 +620,37 @@ fase_montaje_sistema
 fase_post_install
 
 # Desmontar particiones y reiniciar el sistema
-header "🔄 Desmontando particiones y reiniciando el sistema"
+header "🧹 Desmontando particiones y reiniciando el sistema"
 
 arch-chroot /mnt systemctl enable lightdm
 arch-chroot /mnt systemctl set-default graphical.target
 
+echo -e "${CYAN}🔧 Instalando GRUB...${RESET}"
+
+# Verificar EFI
+mount | grep /mnt/boot/efi || {
+  echo -e "${RED}❌ EFI no está montado. Abortando...${RESET}"
+  exit 1
+}
+
+# Instalar GRUB
+arch-chroot /mnt grub-install \
+  --target=x86_64-efi \
+  --efi-directory=/boot/efi \
+  --bootloader-id=GRUB \
+  --modules="lvm" \
+  --recheck
+
+# Generar configuración
+arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+
+# Verificar GRUB
 if [[ ! -f /mnt/boot/grub/grub.cfg ]]; then
-	echo -e "${RED}❌ GRUB no generado correctamente${RESET}"
-	exit 1
+  echo -e "${RED}❌ GRUB no generado correctamente${RESET}"
+  exit 1
 fi
 
+# Desmontar
 umount -R /mnt || true
 
 echo -e "${GREEN}🎉 Instalación COMPLETA. Sistema Arch con cifrado, RAID-ZFS y hardening/GUI.${RESET}"
