@@ -508,152 +508,184 @@ function fase_montaje_sistema() {
 
 function seleccionar_region_interactivo() {
 
-  header "🌍 CONFIGURACIÓN REGIONAL"
+  # 🔁 Bucle principal → permite repetir todo el proceso si el usuario no confirma
+  while true; do
 
-  # 🔁 Reutilizar configuración previa
-  if [[ -f /mnt/root/installer-config/region.conf ]]; then
-    echo -e "${GREEN}✔ Configuración previa encontrada${RESET}"
-    source /mnt/root/installer-config/region.conf
+    header "🌍 CONFIGURACIÓN REGIONAL"
 
+    # 🔁 1. REUTILIZAR CONFIGURACIÓN PREVIA
+    # Si existe configuración guardada, la carga y permite usarla directamente
+    if [[ -f /mnt/root/installer-config/region.conf ]]; then
+      echo -e "${GREEN}✔ Configuración previa encontrada${RESET}"
+      source /mnt/root/installer-config/region.conf
+
+      echo "KEYMAP=$KEYMAP"
+      echo "LOCALE=$LOCALE"
+      echo "TIMEZONE=$TIMEZONE"
+
+      read -rp "¿Usar esta configuración? [s/n]: " REUSE
+      [[ "$REUSE" == "s" ]] && pausa && return
+    fi
+
+    # 🔍 2. AUTODETECCIÓN POR IP (NO OBLIGATORIA)
+    # Intenta detectar país para sugerir valores por defecto
+    DETECTED_COUNTRY=$(curl -s --max-time 2 ipinfo.io/country 2>/dev/null || echo "")
+
+    case $DETECTED_COUNTRY in
+      ES) DEF_KEYMAP="es"; DEF_LOCALE="es_ES.UTF-8";;
+      US) DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8";;
+      JP) DEF_KEYMAP="jp"; DEF_LOCALE="ja_JP.UTF-8";;
+      *)  DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8";;
+    esac
+
+    # 🌍 3. SELECCIÓN DE IDIOMA / LOCALE
+    while true; do
+      echo -e "\n${CYAN}🌍 Selección de idioma${RESET}"
+      echo "1) Español (España)"
+      echo "2) English (US)"
+      echo "3) Japonés"
+      echo "4) 🔎 Buscar locale"
+      echo "5) ✍ Personalizado"
+      echo "0) 🔙 Volver"
+
+      read -rp "Opción: " LANG_OPTION
+
+      case $LANG_OPTION in
+        # ✔ Perfiles rápidos (recomendado para la mayoría)
+        1) LOCALE="es_ES.UTF-8"; KEYMAP="es"; break ;;
+        2) LOCALE="en_US.UTF-8"; KEYMAP="us"; break ;;
+        3) LOCALE="ja_JP.UTF-8"; KEYMAP="jp"; break ;;
+
+        # 🔎 Búsqueda de locales disponibles en el sistema
+        4)
+          read -rp "Buscar (ej: es_, en_, fr_): " QUERY
+          mapfile -t RESULTS < <(locale -a | grep -i "$QUERY" | head -n 20)
+
+          # Si no hay resultados → repetir
+          if [[ ${#RESULTS[@]} -eq 0 ]]; then
+            echo -e "${RED}❌ Sin resultados${RESET}"
+            continue
+          fi
+
+          # Selector interactivo
+          select L in "${RESULTS[@]}"; do
+            [[ -n "$L" ]] && LOCALE="$L" && break
+          done
+
+          read -rp "Keymap (ej: es, us): " KEYMAP
+          break
+          ;;
+
+        # ✍ Entrada manual total
+        5)
+          read -rp "Locale (ej: es_ES.UTF-8): " LOCALE
+          read -rp "Keymap (ej: es, us): " KEYMAP
+          break
+          ;;
+
+        # 🔙 Volver al menú anterior
+        0) continue 2 ;;
+
+        # ❌ Entrada inválida
+        *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
+      esac
+    done
+
+    # 🌐 4. SELECCIÓN DE TIMEZONE (AVANZADA)
+    while true; do
+      echo -e "\n${CYAN}🌐 Selección de zona horaria${RESET}"
+      echo "1) 🌍 Lista rápida"
+      echo "2) 📂 Por región"
+      echo "3) 🔎 Buscar"
+      echo "4) ✍ Manual"
+      echo "0) 🔙 Volver"
+
+      read -rp "Opción: " TZ_MODE
+
+      case $TZ_MODE in
+
+        # ✔ Lista corta (lo más común)
+        1)
+          options=(
+            "Europe/Madrid" "Europe/London" "Europe/Paris"
+            "America/New_York" "America/Los_Angeles"
+            "Asia/Tokyo" "Asia/Shanghai" "UTC"
+          )
+          select TZ in "${options[@]}"; do
+            [[ -n "$TZ" ]] && TIMEZONE="$TZ" && break 2
+          done
+          ;;
+
+        # 📂 Filtrado por región
+        2)
+          read -rp "Región (Europe/America/Asia): " TZ_FILTER
+          mapfile -t TZ_LIST < <(timedatectl list-timezones | grep "^$TZ_FILTER")
+
+          select TZ in "${TZ_LIST[@]:0:20}"; do
+            [[ -n "$TZ" ]] && TIMEZONE="$TZ" && break 2
+          done
+          ;;
+
+        # 🔎 Búsqueda libre
+        3)
+          read -rp "Buscar: " QUERY
+          mapfile -t RESULTS < <(timedatectl list-timezones | grep -i "$QUERY")
+
+          select TZ in "${RESULTS[@]:0:20}"; do
+            [[ -n "$TZ" ]] && TIMEZONE="$TZ" && break 2
+          done
+          ;;
+
+        # ✍ Entrada manual
+        4)
+          read -rp "Timezone manual: " TIMEZONE
+          [[ -f "/usr/share/zoneinfo/$TIMEZONE" ]] && break
+          echo -e "${RED}❌ Timezone inválido${RESET}"
+          ;;
+
+        # 🔙 Volver atrás
+        0) continue 2 ;;
+
+        # ❌ Error
+        *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
+      esac
+    done
+
+    # ⚙️ 5. AJUSTES MANUALES (OPCIONAL)
+    # Permite modificar valores sin repetir todo el proceso
+    echo -e "\n${YELLOW}⚙️ Ajustes manuales (opcional)${RESET}"
+
+    read -rp "Teclado [$KEYMAP]: " TMP; [[ -n "$TMP" ]] && KEYMAP="$TMP"
+    read -rp "Locale [$LOCALE]: " TMP; [[ -n "$TMP" ]] && LOCALE="$TMP"
+    read -rp "Timezone [$TIMEZONE]: " TMP; [[ -n "$TMP" ]] && TIMEZONE="$TMP"
+
+    # 🛡️ 6. VALIDACIÓN
+    # Evita valores inválidos que rompan el sistema
+    localectl list-keymaps | grep -qx "$KEYMAP" || KEYMAP="us"
+    [[ ! -f "/usr/share/zoneinfo/$TIMEZONE" ]] && TIMEZONE="UTC"
+
+    # 📊 Mostrar resultado final
+    echo -e "\n${GREEN}✔ Configuración final:${RESET}"
     echo "KEYMAP=$KEYMAP"
     echo "LOCALE=$LOCALE"
     echo "TIMEZONE=$TIMEZONE"
 
-    read -rp "¿Usar esta configuración? [s/n]: " REUSE
-    if [[ "$REUSE" == "s" ]]; then
-      pausa
-      return
-    fi
-  fi
+    # ✅ Confirmación final
+    read -rp "¿Confirmar? [s/n]: " CONFIRM
+    [[ "$CONFIRM" == "s" ]] || continue
 
-  # 🔍 Autodetección
-  echo -e "${YELLOW}🔍 Detectando región automáticamente...${RESET}"
-  DETECTED_COUNTRY=$(curl -s --max-time 2 ipinfo.io/country 2>/dev/null || echo "")
-
-  case $DETECTED_COUNTRY in
-    ES) DEF_KEYMAP="es"; DEF_LOCALE="es_ES.UTF-8"; DEF_TZ="Europe/Madrid" ;;
-    US) DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8"; DEF_TZ="America/New_York" ;;
-    JP) DEF_KEYMAP="jp"; DEF_LOCALE="ja_JP.UTF-8"; DEF_TZ="Asia/Tokyo" ;;
-    *)  DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8"; DEF_TZ="UTC" ;;
-  esac
-
-  if [[ -n "$DETECTED_COUNTRY" ]]; then
-    echo -e "${GREEN}✔ Detectado: $DETECTED_COUNTRY${RESET}"
-    echo "Idioma: $DEF_LOCALE"
-    echo "Teclado: $DEF_KEYMAP"
-    echo "Zona: $DEF_TZ"
-
-    read -rp "¿Usar esta configuración? [s/n]: " AUTO
-  else
-    AUTO="n"
-  fi
-
-  if [[ "$AUTO" != "s" ]]; then
-
-    echo -e "\n${CYAN}Selecciona perfil:${RESET}"
-    echo "1) English (US)"
-    echo "2) Español (España)"
-    echo "3) Personalizado"
-
-    read -rp "Opción: " REGION
-
-    case $REGION in
-      1)
-        KEYMAP="us"
-        LOCALE="en_US.UTF-8"
-        ;;
-      2)
-        KEYMAP="es"
-        LOCALE="es_ES.UTF-8"
-        ;;
-      3)
-        read -rp "Locale (ej: es_ES.UTF-8): " LOCALE
-        read -rp "Keymap (ej: es, us, jp): " KEYMAP
-        ;;
-      *)
-        echo -e "${RED}❌ Opción inválida, usando US${RESET}"
-        KEYMAP="us"
-        LOCALE="en_US.UTF-8"
-        ;;
-    esac
-
-  else
-    KEYMAP="$DEF_KEYMAP"
-    LOCALE="$DEF_LOCALE"
-  fi
-
-  # 🌐 SELECCIÓN DE TIMEZONE (INTERACTIVA)
-  echo -e "\n${CYAN}🌐 Selección de zona horaria${RESET}"
-  echo "1) Europe"
-  echo "2) America"
-  echo "3) Asia"
-  echo "4) Manual"
-
-  read -rp "Región: " TZ_REGION
-
-  case $TZ_REGION in
-    1) TZ_FILTER="Europe" ;;
-    2) TZ_FILTER="America" ;;
-    3) TZ_FILTER="Asia" ;;
-    4)
-      read -rp "Timezone manual (ej: Europe/Madrid): " TIMEZONE
-      ;;
-    *)
-      TZ_FILTER="UTC"
-      ;;
-  esac
-
-  if [[ "$TZ_REGION" != "4" ]]; then
-    select TZ in $(timedatectl list-timezones | grep "$TZ_FILTER"); do
-      TIMEZONE="$TZ"
-      break
-    done
-  fi
-
-  # ⚙️ Override manual
-  echo -e "\n${YELLOW}⚙️ Ajustes manuales (opcional)${RESET}"
-
-  read -rp "Teclado [$KEYMAP]: " TMP
-  [[ -n "$TMP" ]] && KEYMAP="$TMP"
-
-  read -rp "Locale [$LOCALE]: " TMP
-  [[ -n "$TMP" ]] && LOCALE="$TMP"
-
-  read -rp "Timezone [$TIMEZONE]: " TMP
-  [[ -n "$TMP" ]] && TIMEZONE="$TMP"
-
-  # 🎹 Validación keymap
-  if ! localectl list-keymaps | grep -qx "$KEYMAP"; then
-    echo -e "${YELLOW}⚠️ Keymap inválido, usando us${RESET}"
-    KEYMAP="us"
-  fi
-
-  # 🌐 Validación timezone
-  if [[ ! -f "/usr/share/zoneinfo/$TIMEZONE" ]]; then
-    echo -e "${YELLOW}⚠️ Timezone inválido, usando UTC${RESET}"
-    TIMEZONE="UTC"
-  fi
-
-  # 🧪 Defaults
-  [[ -z "$KEYMAP" ]] && KEYMAP="us"
-  [[ -z "$LOCALE" ]] && LOCALE="en_US.UTF-8"
-  [[ -z "$TIMEZONE" ]] && TIMEZONE="UTC"
-
-  echo -e "\n${GREEN}✔ Configuración final:${RESET}"
-  echo "KEYMAP=$KEYMAP"
-  echo "LOCALE=$LOCALE"
-  echo "TIMEZONE=$TIMEZONE"
-
-  # 💾 Guardar configuración
-  mkdir -p /mnt/root/installer-config
-
-  cat > /mnt/root/installer-config/region.conf <<EOF
+    # 💾 7. GUARDADO PARA FUTURAS EJECUCIONES
+    mkdir -p /mnt/root/installer-config
+    cat > /mnt/root/installer-config/region.conf <<EOF
 KEYMAP=$KEYMAP
 LOCALE=$LOCALE
 TIMEZONE=$TIMEZONE
 EOF
 
-  pausa
+    pausa
+    return
+
+  done
 }
 
 function fase_post_install() {
