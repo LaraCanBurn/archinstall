@@ -506,13 +506,203 @@ function fase_montaje_sistema() {
 	pausa
 }
 
+function seleccionar_region_interactivo() {
+
+  header "🌍 CONFIGURACIÓN REGIONAL"
+
+  # 🔁 Reutilizar configuración previa
+  if [[ -f /mnt/root/installer-config/region.conf ]]; then
+    echo -e "${GREEN}✔ Configuración previa encontrada${RESET}"
+    source /mnt/root/installer-config/region.conf
+
+    echo "KEYMAP=$KEYMAP"
+    echo "LOCALE=$LOCALE"
+    echo "TIMEZONE=$TIMEZONE"
+
+    read -rp "¿Usar esta configuración? [s/n]: " REUSE
+    if [[ "$REUSE" == "s" ]]; then
+      pausa
+      return
+    fi
+  fi
+
+  # 🔍 Autodetección
+  echo -e "${YELLOW}🔍 Detectando región automáticamente...${RESET}"
+  DETECTED_COUNTRY=$(curl -s --max-time 2 ipinfo.io/country 2>/dev/null || echo "")
+
+  case $DETECTED_COUNTRY in
+    ES) DEF_KEYMAP="es"; DEF_LOCALE="es_ES.UTF-8"; DEF_TZ="Europe/Madrid" ;;
+    US) DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8"; DEF_TZ="America/New_York" ;;
+    JP) DEF_KEYMAP="jp"; DEF_LOCALE="ja_JP.UTF-8"; DEF_TZ="Asia/Tokyo" ;;
+    *)  DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8"; DEF_TZ="UTC" ;;
+  esac
+
+  if [[ -n "$DETECTED_COUNTRY" ]]; then
+    echo -e "${GREEN}✔ Detectado: $DETECTED_COUNTRY${RESET}"
+    echo "Idioma: $DEF_LOCALE"
+    echo "Teclado: $DEF_KEYMAP"
+    echo "Zona: $DEF_TZ"
+
+    read -rp "¿Usar esta configuración? [s/n]: " AUTO
+  else
+    AUTO="n"
+  fi
+
+  if [[ "$AUTO" != "s" ]]; then
+
+    echo -e "\n${CYAN}Selecciona perfil:${RESET}"
+    echo "1) English (US)"
+    echo "2) Español (España)"
+    echo "3) Personalizado"
+
+    read -rp "Opción: " REGION
+
+    case $REGION in
+      1)
+        KEYMAP="us"
+        LOCALE="en_US.UTF-8"
+        ;;
+      2)
+        KEYMAP="es"
+        LOCALE="es_ES.UTF-8"
+        ;;
+      3)
+        read -rp "Locale (ej: es_ES.UTF-8): " LOCALE
+        read -rp "Keymap (ej: es, us, jp): " KEYMAP
+        ;;
+      *)
+        echo -e "${RED}❌ Opción inválida, usando US${RESET}"
+        KEYMAP="us"
+        LOCALE="en_US.UTF-8"
+        ;;
+    esac
+
+  else
+    KEYMAP="$DEF_KEYMAP"
+    LOCALE="$DEF_LOCALE"
+  fi
+
+  # 🌐 SELECCIÓN DE TIMEZONE (INTERACTIVA)
+  echo -e "\n${CYAN}🌐 Selección de zona horaria${RESET}"
+  echo "1) Europe"
+  echo "2) America"
+  echo "3) Asia"
+  echo "4) Manual"
+
+  read -rp "Región: " TZ_REGION
+
+  case $TZ_REGION in
+    1) TZ_FILTER="Europe" ;;
+    2) TZ_FILTER="America" ;;
+    3) TZ_FILTER="Asia" ;;
+    4)
+      read -rp "Timezone manual (ej: Europe/Madrid): " TIMEZONE
+      ;;
+    *)
+      TZ_FILTER="UTC"
+      ;;
+  esac
+
+  if [[ "$TZ_REGION" != "4" ]]; then
+    select TZ in $(timedatectl list-timezones | grep "$TZ_FILTER"); do
+      TIMEZONE="$TZ"
+      break
+    done
+  fi
+
+  # ⚙️ Override manual
+  echo -e "\n${YELLOW}⚙️ Ajustes manuales (opcional)${RESET}"
+
+  read -rp "Teclado [$KEYMAP]: " TMP
+  [[ -n "$TMP" ]] && KEYMAP="$TMP"
+
+  read -rp "Locale [$LOCALE]: " TMP
+  [[ -n "$TMP" ]] && LOCALE="$TMP"
+
+  read -rp "Timezone [$TIMEZONE]: " TMP
+  [[ -n "$TMP" ]] && TIMEZONE="$TMP"
+
+  # 🎹 Validación keymap
+  if ! localectl list-keymaps | grep -qx "$KEYMAP"; then
+    echo -e "${YELLOW}⚠️ Keymap inválido, usando us${RESET}"
+    KEYMAP="us"
+  fi
+
+  # 🌐 Validación timezone
+  if [[ ! -f "/usr/share/zoneinfo/$TIMEZONE" ]]; then
+    echo -e "${YELLOW}⚠️ Timezone inválido, usando UTC${RESET}"
+    TIMEZONE="UTC"
+  fi
+
+  # 🧪 Defaults
+  [[ -z "$KEYMAP" ]] && KEYMAP="us"
+  [[ -z "$LOCALE" ]] && LOCALE="en_US.UTF-8"
+  [[ -z "$TIMEZONE" ]] && TIMEZONE="UTC"
+
+  echo -e "\n${GREEN}✔ Configuración final:${RESET}"
+  echo "KEYMAP=$KEYMAP"
+  echo "LOCALE=$LOCALE"
+  echo "TIMEZONE=$TIMEZONE"
+
+  # 💾 Guardar configuración
+  mkdir -p /mnt/root/installer-config
+
+  cat > /mnt/root/installer-config/region.conf <<EOF
+KEYMAP=$KEYMAP
+LOCALE=$LOCALE
+TIMEZONE=$TIMEZONE
+EOF
+
+  pausa
+}
+
 function fase_post_install() {
 header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
 
-arch-chroot /mnt env USERNAME="$USERNAME" bash -c "
+arch-chroot /mnt env USERNAME="$USERNAME" KEYMAP="$KEYMAP" LOCALE="$LOCALE" TIMEZONE="$TIMEZONE" bash -c "
 set -euo pipefail
 
 echo \"USERNAME dentro de chroot: \$USERNAME\"
+
+# Configuración regional robusta
+echo \"KEYMAP=\$KEYMAP\" > /etc/vconsole.conf
+
+
+# Asegurar que el locale existe en locale.gen
+grep -qE "^#?\s*\$LOCALE\s+UTF-8" /etc/locale.gen || echo "\$LOCALE UTF-8" >> /etc/locale.gen
+
+# Descomentar correctamente (robusto ante espacios)
+sed -i "s/^#\?\s*\$LOCALE UTF-8/\$LOCALE UTF-8/" /etc/locale.gen
+
+# Generar locales
+locale-gen
+
+# Fallback si falla
+if ! locale -a | grep -iq "${LOCALE%%.*}"; then
+  echo "⚠️ Locale inválido, usando en_US.UTF-8"
+  LOCALE="en_US.UTF-8"
+
+  grep -q "en_US.UTF-8 UTF-8" /etc/locale.gen || echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+  sed -i "s/^#\?\s*en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
+
+  locale-gen
+fi
+
+echo "LANG=$LOCALE" > /etc/locale.conf
+
+# Timezone
+ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
+hwclock --systohc
+
+# Teclado en entorno gráfico
+mkdir -p /etc/X11/xorg.conf.d
+cat <<EOF > /etc/X11/xorg.conf.d/00-keyboard.conf
+Section "InputClass"
+    Identifier "system-keyboard"
+    MatchIsKeyboard "on"
+    Option "XkbLayout" "$KEYMAP"
+EndSection
+EOF
 
 # Grupo realtime
 if ! getent group realtime >/dev/null; then
@@ -620,21 +810,7 @@ systemctl enable clear-cache.service
 pausa
 }
 
-#### 🧩 EJECUCIÓN FINAL ####
-header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
-
-seleccionar_discos_y_usuario
-fase_preinstall
-fase_particiones_cifrado
-fase_montaje_sistema
-fase_post_install
-
-# Desmontar particiones y reiniciar el sistema
-header "🧹 Desmontando particiones y reiniciando el sistema"
-
-# arch-chroot /mnt systemctl enable lightdm
-arch-chroot /mnt systemctl set-default graphical.target
-
+function configurar_grub() {
 echo -e "${CYAN}🔧 Instalando GRUB...${RESET}"
 
 # Verificar EFI primero
@@ -679,6 +855,28 @@ if [[ ! -f /mnt/boot/grub/grub.cfg ]]; then
   echo -e "${RED}❌ GRUB no generado correctamente${RESET}"
   exit 1
 fi
+
+  echo -e "${GREEN}✔ GRUB instalado correctamente${RESET}"
+
+}
+
+#### 🧩 EJECUCIÓN FINAL ####
+header "🚀 INICIO DE INSTALACIÓN ARCH ZFS (fusionado)"
+
+seleccionar_discos_y_usuario
+fase_preinstall
+fase_particiones_cifrado
+fase_montaje_sistema
+seleccionar_region_interactivo
+fase_post_install
+configurar_grub
+
+# Desmontar particiones y reiniciar el sistema
+header "🧹 Desmontando particiones y reiniciando el sistema"
+
+# arch-chroot /mnt systemctl enable lightdm
+arch-chroot /mnt systemctl set-default graphical.target
+
 # Desmontar
 umount -R /mnt || true
 
