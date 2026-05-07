@@ -506,186 +506,335 @@ function fase_montaje_sistema() {
 	pausa
 }
 
-function seleccionar_region_interactivo() {
+# ================================
+# CONFIGURACIÓN REGIONAL (PRO)
+# ================================
 
-  # 🔁 Bucle principal → permite repetir todo el proceso si el usuario no confirma
+function configurar_region() {
+
   while true; do
-
+    clear
     header "🌍 CONFIGURACIÓN REGIONAL"
 
-    # 🔁 1. REUTILIZAR CONFIGURACIÓN PREVIA
-    # Si existe configuración guardada, la carga y permite usarla directamente
-    if [[ -f /mnt/root/installer-config/region.conf ]]; then
-      echo -e "${GREEN}✔ Configuración previa encontrada${RESET}"
-      source /mnt/root/installer-config/region.conf
+    echo "1) Idioma"
+    echo "2) Teclado"
+    echo "3) Zona horaria"
+    echo "4) Ver configuración"
+    echo "5) Confirmar y continuar"
+    echo "0) 🔙 Volver"
 
-      echo "KEYMAP=$KEYMAP"
-      echo "LOCALE=$LOCALE"
-      echo "TIMEZONE=$TIMEZONE"
+    read -rp "Opción: " OPTION
 
-      read -rp "¿Usar esta configuración? [s/n]: " REUSE
-      [[ "$REUSE" == "s" ]] && pausa && return
-    fi
-
-    # 🔍 2. AUTODETECCIÓN POR IP (NO OBLIGATORIA)
-    # Intenta detectar país para sugerir valores por defecto
-    DETECTED_COUNTRY=$(curl -s --max-time 2 ipinfo.io/country 2>/dev/null || echo "")
-
-    case $DETECTED_COUNTRY in
-      ES) DEF_KEYMAP="es"; DEF_LOCALE="es_ES.UTF-8";;
-      US) DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8";;
-      JP) DEF_KEYMAP="jp"; DEF_LOCALE="ja_JP.UTF-8";;
-      *)  DEF_KEYMAP="us"; DEF_LOCALE="en_US.UTF-8";;
+    case $OPTION in
+      1) seleccionar_idioma ;;
+      2) seleccionar_teclado ;;
+      3) seleccionar_timezone ;;
+      4) mostrar_configuracion ;;
+      5)
+        confirmar_configuracion && return
+        ;;
+      0) return ;;
+      *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
     esac
+  done
+}
 
-    # 🌍 3. SELECCIÓN DE IDIOMA / LOCALE
-    while true; do
-      echo -e "\n${CYAN}🌍 Selección de idioma${RESET}"
-      echo "1) Español (España)"
-      echo "2) English (US)"
-      echo "3) Japonés"
-      echo "4) 🔎 Buscar locale"
-      echo "5) ✍ Personalizado"
-      echo "0) 🔙 Volver"
+# ================================
+# IDIOMA
+# ================================
 
-      read -rp "Opción: " LANG_OPTION
+function seleccionar_idioma() {
 
-      case $LANG_OPTION in
-        # ✔ Perfiles rápidos (recomendado para la mayoría)
-        1) LOCALE="es_ES.UTF-8"; KEYMAP="es"; break ;;
-        2) LOCALE="en_US.UTF-8"; KEYMAP="us"; break ;;
-        3) LOCALE="ja_JP.UTF-8"; KEYMAP="jp"; break ;;
+  while true; do
+    clear
+    echo -e "${CYAN}🌍 Selección de idioma${RESET}"
 
-        # 🔎 Búsqueda de locales disponibles en el sistema
-        4)
-          read -rp "Buscar (ej: es_, en_, fr_): " QUERY
-          mapfile -t RESULTS < <(locale -a | grep -i "$QUERY" | head -n 20)
+    echo "1) Español (España)"
+    echo "2) English (US)"
+    echo "3) Japonés"
+    echo "4) 🔎 Buscar locale"
+    echo "5) ✍ Manual"
+    echo "0) 🔙 Volver"
 
-          # Si no hay resultados → repetir
-          if [[ ${#RESULTS[@]} -eq 0 ]]; then
-            echo -e "${RED}❌ Sin resultados${RESET}"
-            continue
-          fi
+    read -rp "Opción: " OPT
 
-          # Selector interactivo
-          select L in "${RESULTS[@]}"; do
-            [[ -n "$L" ]] && LOCALE="$L" && break
-          done
+    case $OPT in
+      1) LOCALE="es_ES.UTF-8"; KEYMAP="es"; break ;;
+      2) LOCALE="en_US.UTF-8"; KEYMAP="us"; break ;;
+      3) LOCALE="ja_JP.UTF-8"; KEYMAP="jp"; break ;;
 
-          read -rp "Keymap (ej: es, us): " KEYMAP
+      4)
+        read -rp "Buscar: " QUERY
+        mapfile -t RESULTS < <(locale -a | grep -i "$QUERY")
+
+        [[ ${#RESULTS[@]} -eq 0 ]] && echo "❌ Sin resultados" && continue
+
+        echo
+        for i in "${!RESULTS[@]:0:20}"; do
+          echo "$((i+1))) ${RESULTS[i]}"
+        done
+        echo "0) 🔙 Volver"
+
+        read -rp "Opción: " CHOICE
+
+        [[ "$CHOICE" == "0" ]] && continue
+
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=20)); then
+          LOCALE="${RESULTS[$((CHOICE-1))]}"
+          read -rp "Keymap: " KEYMAP
           break
-          ;;
+        else
+          echo -e "${RED}❌ Selección inválida${RESET}"
+        fi
+        ;;
 
-        # ✍ Entrada manual total
-        5)
-          read -rp "Locale (ej: es_ES.UTF-8): " LOCALE
-          read -rp "Keymap (ej: es, us): " KEYMAP
+      5)
+        read -rp "Locale: " LOCALE
+        read -rp "Keymap: " KEYMAP
+        break
+        ;;
+
+      0) return ;;
+      *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
+    esac
+  done
+}
+
+# ================================
+# TECLADO
+# ================================
+
+function seleccionar_teclado() {
+
+  while true; do
+    clear
+    echo -e "${CYAN}⌨️ Selección de teclado${RESET}"
+
+    echo "1) Español"
+    echo "2) US"
+    echo "3) Japonés"
+    echo "4) 🔎 Buscar"
+    echo "5) ✍ Manual"
+    echo "0) 🔙 Volver"
+
+    read -rp "Opción: " OPT
+
+    case $OPT in
+      1) KEYMAP="es"; break ;;
+      2) KEYMAP="us"; break ;;
+      3) KEYMAP="jp"; break ;;
+
+      4)
+        read -rp "Buscar: " QUERY
+        mapfile -t RESULTS < <(localectl list-keymaps | grep -i "$QUERY")
+
+        [[ ${#RESULTS[@]} -eq 0 ]] && echo "❌ Sin resultados" && continue
+
+        echo
+        for i in "${!RESULTS[@]:0:20}"; do
+          echo "$((i+1))) ${RESULTS[i]}"
+        done
+        echo "0) 🔙 Volver"
+
+        read -rp "Opción: " CHOICE
+
+        [[ "$CHOICE" == "0" ]] && continue
+
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+          KEYMAP="${RESULTS[$((CHOICE-1))]}"
           break
-          ;;
+        else
+          echo -e "${RED}❌ Selección inválida${RESET}"
+        fi
+        ;;
 
-        # 🔙 Volver al menú anterior
-        0) continue 2 ;;
+      5)
+        read -rp "Keymap: " KEYMAP
+        break
+        ;;
 
-        # ❌ Entrada inválida
-        *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
-      esac
-    done
+      0) return ;;
+      *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
+    esac
+  done
+}
 
-    # 🌐 4. SELECCIÓN DE TIMEZONE (AVANZADA)
-    while true; do
-      echo -e "\n${CYAN}🌐 Selección de zona horaria${RESET}"
-      echo "1) 🌍 Lista rápida"
-      echo "2) 📂 Por región"
-      echo "3) 🔎 Buscar"
-      echo "4) ✍ Manual"
-      echo "0) 🔙 Volver"
+# ================================
+# TIMEZONE (SIN SELECT BUGS)
+# ================================
 
-      read -rp "Opción: " TZ_MODE
+function seleccionar_timezone() {
 
-      case $TZ_MODE in
+  while true; do
+    clear
+    echo -e "${CYAN}🌐 Selección de zona horaria${RESET}"
 
-        # ✔ Lista corta (lo más común)
-        1)
-          options=(
-            "Europe/Madrid" "Europe/London" "Europe/Paris"
-            "America/New_York" "America/Los_Angeles"
-            "Asia/Tokyo" "Asia/Shanghai" "UTC"
-          )
-          select TZ in "${options[@]}"; do
-            [[ -n "$TZ" ]] && TIMEZONE="$TZ" && break 2
-          done
-          ;;
+    echo "1) 🌍 Lista rápida"
+    echo "2) 📂 Por región"
+    echo "3) 🔎 Buscar"
+    echo "4) ✍ Manual"
+    echo "0) 🔙 Volver"
 
-        # 📂 Filtrado por región
-        2)
-          read -rp "Región (Europe/America/Asia): " TZ_FILTER
-          mapfile -t TZ_LIST < <(timedatectl list-timezones | grep "^$TZ_FILTER")
+    read -rp "Opción: " TZ_MODE
 
-          select TZ in "${TZ_LIST[@]:0:20}"; do
-            [[ -n "$TZ" ]] && TIMEZONE="$TZ" && break 2
-          done
-          ;;
+    case $TZ_MODE in
 
-        # 🔎 Búsqueda libre
-        3)
-          read -rp "Buscar: " QUERY
-          mapfile -t RESULTS < <(timedatectl list-timezones | grep -i "$QUERY")
+      1)
+        options=(
+          "Europe/Madrid"
+          "Europe/London"
+          "Europe/Paris"
+          "America/New_York"
+          "America/Los_Angeles"
+          "Asia/Tokyo"
+          "Asia/Shanghai"
+          "UTC"
+        )
 
-          select TZ in "${RESULTS[@]:0:20}"; do
-            [[ -n "$TZ" ]] && TIMEZONE="$TZ" && break 2
-          done
-          ;;
+        echo
+        for i in "${!options[@]}"; do
+          echo "$((i+1))) ${options[i]}"
+        done
+        echo "0) 🔙 Volver"
 
-        # ✍ Entrada manual
-        4)
-          read -rp "Timezone manual: " TIMEZONE
-          [[ -f "/usr/share/zoneinfo/$TIMEZONE" ]] && break
+        read -rp "Opción: " CHOICE
+
+        [[ "$CHOICE" == "0" ]] && continue
+
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=${#options[@]})); then
+          TIMEZONE="${options[$((CHOICE-1))]}"
+          break
+        else
+          echo -e "${RED}❌ Selección inválida${RESET}"
+        fi
+        ;;
+
+      2)
+        echo "1) Europe"
+        echo "2) America"
+        echo "3) Asia"
+        echo "4) Africa"
+        echo "5) Australia"
+        echo "0) 🔙 Volver"
+
+        read -rp "Región: " REGION
+
+        case $REGION in
+          1) TZ_FILTER="Europe" ;;
+          2) TZ_FILTER="America" ;;
+          3) TZ_FILTER="Asia" ;;
+          4) TZ_FILTER="Africa" ;;
+          5) TZ_FILTER="Australia" ;;
+          0) continue ;;
+          *) echo -e "${RED}❌ Opción inválida${RESET}"; continue ;;
+        esac
+
+        mapfile -t TZ_LIST < <(timedatectl list-timezones | grep "^$TZ_FILTER")
+
+        echo
+        for i in "${!TZ_LIST[@]:0:20}"; do
+          echo "$((i+1))) ${TZ_LIST[i]}"
+        done
+        echo "0) 🔙 Volver"
+
+        read -rp "Opción: " CHOICE
+
+        [[ "$CHOICE" == "0" ]] && continue
+
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+          TIMEZONE="${TZ_LIST[$((CHOICE-1))]}"
+          break
+        else
+          echo -e "${RED}❌ Selección inválida${RESET}"
+        fi
+        ;;
+
+      3)
+        read -rp "Buscar: " QUERY
+
+        mapfile -t RESULTS < <(timedatectl list-timezones | grep -i "$QUERY")
+
+        [[ ${#RESULTS[@]} -eq 0 ]] && echo "❌ Sin resultados" && continue
+
+        echo
+        for i in "${!RESULTS[@]:0:20}"; do
+          echo "$((i+1))) ${RESULTS[i]}"
+        done
+        echo "0) 🔙 Volver"
+
+        read -rp "Opción: " CHOICE
+
+        [[ "$CHOICE" == "0" ]] && continue
+
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+          TIMEZONE="${RESULTS[$((CHOICE-1))]}"
+          break
+        else
+          echo -e "${RED}❌ Selección inválida${RESET}"
+        fi
+        ;;
+
+      4)
+        read -rp "Timezone manual: " TIMEZONE
+
+        if [[ -f "/usr/share/zoneinfo/$TIMEZONE" ]]; then
+          break
+        else
           echo -e "${RED}❌ Timezone inválido${RESET}"
-          ;;
+        fi
+        ;;
 
-        # 🔙 Volver atrás
-        0) continue 2 ;;
+      0) return ;;
+      *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
+    esac
+  done
+}
 
-        # ❌ Error
-        *) echo -e "${RED}❌ Opción inválida${RESET}" ;;
-      esac
-    done
+# ================================
+# MOSTRAR CONFIG
+# ================================
 
-    # ⚙️ 5. AJUSTES MANUALES (OPCIONAL)
-    # Permite modificar valores sin repetir todo el proceso
-    echo -e "\n${YELLOW}⚙️ Ajustes manuales (opcional)${RESET}"
+function mostrar_configuracion() {
+  echo
+  echo -e "${GREEN}CONFIGURACIÓN ACTUAL:${RESET}"
+  echo "LOCALE=$LOCALE"
+  echo "KEYMAP=$KEYMAP"
+  echo "TIMEZONE=$TIMEZONE"
+  read -rp "Enter para continuar..."
+}
 
-    read -rp "Teclado [$KEYMAP]: " TMP; [[ -n "$TMP" ]] && KEYMAP="$TMP"
-    read -rp "Locale [$LOCALE]: " TMP; [[ -n "$TMP" ]] && LOCALE="$TMP"
-    read -rp "Timezone [$TIMEZONE]: " TMP; [[ -n "$TMP" ]] && TIMEZONE="$TMP"
+# ================================
+# CONFIRMAR Y GUARDAR
+# ================================
 
-    # 🛡️ 6. VALIDACIÓN
-    # Evita valores inválidos que rompan el sistema
-    localectl list-keymaps | grep -qx "$KEYMAP" || KEYMAP="us"
-    [[ ! -f "/usr/share/zoneinfo/$TIMEZONE" ]] && TIMEZONE="UTC"
+function confirmar_configuracion() {
 
-    # 📊 Mostrar resultado final
-    echo -e "\n${GREEN}✔ Configuración final:${RESET}"
-    echo "KEYMAP=$KEYMAP"
-    echo "LOCALE=$LOCALE"
-    echo "TIMEZONE=$TIMEZONE"
+  echo
+  echo -e "${GREEN}✔ Configuración final:${RESET}"
+  echo "LOCALE=$LOCALE"
+  echo "KEYMAP=$KEYMAP"
+  echo "TIMEZONE=$TIMEZONE"
 
-    # ✅ Confirmación final
-    read -rp "¿Confirmar? [s/n]: " CONFIRM
-    [[ "$CONFIRM" == "s" ]] || continue
+  # aviso pro
+  if [[ "$LOCALE" == "en_US.UTF-8" && "$KEYMAP" == "es" ]]; then
+    echo -e "${YELLOW}⚠️ Sistema en inglés con teclado español${RESET}"
+  fi
 
-    # 💾 7. GUARDADO PARA FUTURAS EJECUCIONES
+  read -rp "¿Confirmar? [s/n]: " CONFIRM
+
+  if [[ "$CONFIRM" == "s" ]]; then
     mkdir -p /mnt/root/installer-config
+
     cat > /mnt/root/installer-config/region.conf <<EOF
 KEYMAP=$KEYMAP
 LOCALE=$LOCALE
 TIMEZONE=$TIMEZONE
 EOF
 
-    pausa
-    return
+    return 0
+  fi
 
-  done
+  return 1
 }
 
 function fase_post_install() {
@@ -899,7 +1048,7 @@ seleccionar_discos_y_usuario
 fase_preinstall
 fase_particiones_cifrado
 fase_montaje_sistema
-seleccionar_region_interactivo
+configurar_region
 fase_post_install
 configurar_grub
 
