@@ -843,45 +843,69 @@ header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
 arch-chroot /mnt env USERNAME="$USERNAME" KEYMAP="$KEYMAP" LOCALE="$LOCALE" TIMEZONE="$TIMEZONE" bash -c "
 set -euo pipefail
 
-echo \"USERNAME dentro de chroot: \$USERNAME\"
+# =====================
+# VARIABLES SEGURAS (evita fallo con set -u)
+# =====================
+: \"\${LOCALE:=en_US.UTF-8}\"
+: \"\${KEYMAP:=us}\"
+: \"\${TIMEZONE:=UTC}\"
 
-# Configuración regional robusta
+# =====================
+# DEBUG REAL (dentro del chroot)
+# =====================
+echo \"DEBUG: USERNAME=\$USERNAME\"
+echo \"DEBUG: LOCALE=\$LOCALE\"
+echo \"DEBUG: KEYMAP=\$KEYMAP\"
+echo \"DEBUG: TIMEZONE=\$TIMEZONE\"
+
+# =====================
+# CONFIGURACIÓN REGIONAL
+# =====================
+
+# Console keymap
 echo \"KEYMAP=\$KEYMAP\" > /etc/vconsole.conf
 
+# Asegurar locale en locale.gen
+grep -q \"^\$LOCALE\" /etc/locale.gen || echo \"\$LOCALE\" >> /etc/locale.gen
 
-# Asegurar que el locale existe en locale.gen
-grep -qE "^#?\s*\$LOCALE\s+UTF-8" /etc/locale.gen || echo "\$LOCALE UTF-8" >> /etc/locale.gen
+# Descomentar si está comentado
+sed -i \"s/^#\\?\\s*\$LOCALE/\$LOCALE/\" /etc/locale.gen
 
-# Descomentar correctamente (robusto ante espacios)
-sed -i "s/^#\?\s*\$LOCALE UTF-8/\$LOCALE UTF-8/" /etc/locale.gen
-
-# Generar locales
+# Generar locale
 locale-gen
 
-# Fallback si falla
-if ! locale -a | grep -iq "${LOCALE%%.*}"; then
-  echo "⚠️ Locale inválido, usando en_US.UTF-8"
-  LOCALE="en_US.UTF-8"
+# =====================
+# VALIDACIÓN LOCALE (fallback real)
+# =====================
+if ! locale -a | grep -iq \"\${LOCALE%%.*}\"; then
+  echo \"⚠️ Locale inválido, usando en_US.UTF-8\"
+  LOCALE=\"en_US.UTF-8\"
 
-  grep -q "en_US.UTF-8 UTF-8" /etc/locale.gen || echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-  sed -i "s/^#\?\s*en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
+  grep -q \"^en_US.UTF-8\" /etc/locale.gen || echo \"en_US.UTF-8\" >> /etc/locale.gen
+  sed -i \"s/^#\\?\\s*en_US.UTF-8/en_US.UTF-8/\" /etc/locale.gen
 
   locale-gen
 fi
 
-echo "LANG=$LOCALE" > /etc/locale.conf
+# Aplicar locale
+echo \"LANG=\$LOCALE\" > /etc/locale.conf
 
-# Timezone
-ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
+# =====================
+# TIMEZONE
+# =====================
+ln -sf /usr/share/zoneinfo/\$TIMEZONE /etc/localtime
 hwclock --systohc
 
-# Teclado en entorno gráfico
+# =====================
+# X11 TECLADO
+# =====================
 mkdir -p /etc/X11/xorg.conf.d
-cat <<EOF > /etc/X11/xorg.conf.d/00-keyboard.conf
-Section "InputClass"
-    Identifier "system-keyboard"
-    MatchIsKeyboard "on"
-    Option "XkbLayout" "$KEYMAP"
+
+cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<EOF
+Section \"InputClass\"
+    Identifier \"system-keyboard\"
+    MatchIsKeyboard \"on\"
+    Option \"XkbLayout\" \"\$KEYMAP\"
 EndSection
 EOF
 
