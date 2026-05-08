@@ -1,6 +1,48 @@
 #!/bin/bash
 
+DEBUG=false
+
+for arg in "$@"; do
+  [[ "$arg" == "--debug" ]] && DEBUG=true
+done
+
 set -euo pipefail
+[[ "$DEBUG" == true ]] && set -x
+
+# ▶️ EJECUCIÓN NORMAL (recomendado para uso habitual)
+# ✔ salida limpia
+# ✔ sin ruido
+# ./install.sh
+
+
+# 🐛 MODO DEBUG (recomendado para desarrollo o si algo falla)
+# ✔ muestra todos los comandos que se ejecutan
+# ✔ útil para entender errores en tiempo real
+# ./install.sh --debug
+
+
+# 🔍 DEBUG CON SCROLL (muy recomendado si el script es largo)
+# ✔ puedes moverte arriba/abajo
+# ✔ buscar errores con /error
+# ✔ no guarda archivo
+# ./install.sh --debug 2>&1 | less
+
+
+# 🔍 DEBUG CON SCROLL AUTOMÁTICO (tipo “live log”)
+# ✔ ves en tiempo real
+# ✔ puedes parar con Ctrl+C
+# ./install.sh --debug 2>&1 | less +F
+
+
+# ⚠️ EJECUCIÓN CON CAPTURA MANUAL (solo si quieres copiar salida)
+# ✔ útil para pegar errores en ChatGPT o foros
+# ./install.sh --debug 2>&1 | tee output.txt
+
+
+# 🔴 FORZAR PARADA EN PRIMER ERROR (ya lo tienes con set -e)
+# ✔ comportamiento actual del script
+# ✔ recomendable para instalación segura
+# ./install.sh
 
 # 🎨 Colores con estilo
 RED='\033[31m'
@@ -15,6 +57,15 @@ BOOT_PART=""  # Partición EFI (ej: /dev/sda1, /dev/nvme0n1p1)
 CRYPT_PART="" # Partición LUKS raíz (ej: /dev/sda2, /dev/nvme0n1p2)
 ZFS_DISKS=()  # Array de discos para ZFS (ej: /dev/sdb /dev/sdc)
 USERNAME=""   # Usuario que se creará
+FULLNAME=""   # Nombre completo del usuario (para GECOS)
+
+function init_defaults() {
+  : "${LOCALE:=en_US.UTF-8}"
+  : "${KEYMAP:=us}"
+  : "${TIMEZONE:=UTC}"
+  : "${USERNAME:=user}"
+  : "${FULLNAME:=User}"
+}
 
 # 🔁 Función para reintentos de comandos
 function retry() {
@@ -206,16 +257,29 @@ function seleccionar_discos_y_usuario() {
 	echo
 	# Usuario
 	while [[ -z "${USERNAME}" ]]; do
-		read -rp "➡ Nombre de usuario a crear (ej: lara, archuser): " USERNAME
-		[[ -z "$USERNAME" ]] && echo -e "${RED}❌ El nombre de usuario no puede estar vacío.${RESET}"
+		read -rp "➡ Nombre de usuario (ej: Lara): " FULLNAME
+
+	[[ -z "$FULLNAME" ]] && {
+  	echo -e "${RED}❌ El nombre no puede estar vacío.${RESET}"
+  	continue
+	}
+
+	# USERNAME limpio (solo login)
+	USERNAME=$(echo "$FULLNAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+
+	# Validación final
+		if [[ -z "$USERNAME" ]]; then
+  		   echo -e "${RED}❌ Nombre inválido.${RESET}"
+  		   continue
+		fi
 	done
 
 	echo
 	echo -e "${GREEN}Resumen de selección:${RESET}"
 	echo -e "  🔹 Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
 	echo -e "  🔹 Discos ZFS: ${CYAN}${ZFS_DISKS[*]:-(ninguno)}${RESET}"
-	echo -e "  🔹 Usuario:    ${CYAN}${USERNAME}${RESET}"
-
+	echo -e "  🔹 Usuario:    ${CYAN}${FULLNAME} (${USERNAME})${RESET}"
+	
 	echo
 	echo -e "${RED}⚠ ATENCIÓN: SE VAN A DESTRUIR LOS DATOS EN ESTOS DISPOSITIVOS:${RESET}"
 	echo -e "  • Disco raíz: ${CYAN}${ROOT_DISK}${RESET}"
@@ -512,6 +576,11 @@ function fase_montaje_sistema() {
 
 function configurar_region() {
 
+ # Evitar errores con set -u
+  : "${LOCALE:=en_US.UTF-8}"
+  : "${KEYMAP:=us}"
+  : "${TIMEZONE:=UTC}"
+
   while true; do
     clear
     header "🌍 CONFIGURACIÓN REGIONAL"
@@ -565,7 +634,7 @@ function seleccionar_idioma() {
 
       4)
         read -rp "Buscar: " QUERY
-        mapfile -t RESULTS < <(locale -a | grep -i "$QUERY")
+        mapfile -t RESULTS < <(locale -a 2>/dev/null | grep -i "$QUERY")
 
         [[ ${#RESULTS[@]} -eq 0 ]] && echo "❌ Sin resultados" && continue
 
@@ -579,8 +648,8 @@ function seleccionar_idioma() {
 
         [[ "$CHOICE" == "0" ]] && continue
 
-        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=20)); then
-          LOCALE="${RESULTS[$((CHOICE-1))]}"
+		if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=20 && CHOICE<=${#RESULTS[@]})); then         
+		  LOCALE="${RESULTS[$((CHOICE-1))]}"
           read -rp "Keymap: " KEYMAP
           break
         else
@@ -640,7 +709,7 @@ function seleccionar_teclado() {
 
         [[ "$CHOICE" == "0" ]] && continue
 
-        if [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=20 && CHOICE<=${#RESULTS[@]})); then
           KEYMAP="${RESULTS[$((CHOICE-1))]}"
           break
         else
@@ -702,7 +771,7 @@ function seleccionar_timezone() {
         [[ "$CHOICE" == "0" ]] && continue
 
         if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=${#options[@]})); then
-          TIMEZONE="${options[$((CHOICE-1))]}"
+           TIMEZONE="${options[$((CHOICE-1))]}"
           break
         else
           echo -e "${RED}❌ Selección inválida${RESET}"
@@ -741,7 +810,7 @@ function seleccionar_timezone() {
 
         [[ "$CHOICE" == "0" ]] && continue
 
-        if [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=20 && CHOICE<=${#TZ_LIST[@]})); then
           TIMEZONE="${TZ_LIST[$((CHOICE-1))]}"
           break
         else
@@ -766,7 +835,7 @@ function seleccionar_timezone() {
 
         [[ "$CHOICE" == "0" ]] && continue
 
-        if [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE>=1 && CHOICE<=20 && CHOICE<=${#RESULTS[@]})); then
           TIMEZONE="${RESULTS[$((CHOICE-1))]}"
           break
         else
@@ -795,11 +864,18 @@ function seleccionar_timezone() {
 # ================================
 
 function mostrar_configuracion() {
+
+  # Evitar error con set -u
+  : "${LOCALE:=en_US.UTF-8}"
+  : "${KEYMAP:=us}"
+  : "${TIMEZONE:=UTC}"
+
   echo
   echo -e "${GREEN}CONFIGURACIÓN ACTUAL:${RESET}"
   echo "LOCALE=$LOCALE"
   echo "KEYMAP=$KEYMAP"
   echo "TIMEZONE=$TIMEZONE"
+
   read -rp "Enter para continuar..."
 }
 
@@ -807,7 +883,33 @@ function mostrar_configuracion() {
 # CONFIRMAR Y GUARDAR
 # ================================
 
+function validar_configuracion() {
+
+  init_defaults
+
+  # Keymap
+  if ! localectl list-keymaps | grep -qx "$KEYMAP"; then
+    echo -e "${YELLOW}⚠️ Keymap inválido → usando us${RESET}"
+    KEYMAP="us"
+  fi
+
+  # Timezone
+  if [[ ! -f "/usr/share/zoneinfo/$TIMEZONE" ]]; then
+    echo -e "${YELLOW}⚠️ Timezone inválido → usando UTC${RESET}"
+    TIMEZONE="UTC"
+  fi
+
+  # Locale básico
+  # Locale validación REAL (formato correcto)
+  if [[ ! "$LOCALE" =~ ^[a-z]{2}_[A-Z]{2}\.UTF-8$ ]]; then
+    echo -e "${YELLOW}⚠️ Locale inválido → usando en_US.UTF-8${RESET}"
+    LOCALE="en_US.UTF-8"
+  fi
+}
+
 function confirmar_configuracion() {
+
+	init_defaults
 
   echo
   echo -e "${GREEN}✔ Configuración final:${RESET}"
@@ -840,7 +942,7 @@ EOF
 function fase_post_install() {
 header "FASE 5 - HARDENING, GUI Y PERSONALIZACIÓN"
 
-arch-chroot /mnt env USERNAME="$USERNAME" KEYMAP="$KEYMAP" LOCALE="$LOCALE" TIMEZONE="$TIMEZONE" bash -c "
+arch-chroot /mnt env USERNAME="$USERNAME" FULLNAME="$FULLNAME" KEYMAP="$KEYMAP" LOCALE="$LOCALE" TIMEZONE="$TIMEZONE" bash -c "
 set -euo pipefail
 
 # =====================
@@ -866,7 +968,7 @@ echo \"DEBUG: TIMEZONE=\$TIMEZONE\"
 echo \"KEYMAP=\$KEYMAP\" > /etc/vconsole.conf
 
 # Asegurar locale en locale.gen
-grep -q \"^\$LOCALE\" /etc/locale.gen || echo \"\$LOCALE\" >> /etc/locale.gen
+grep -q \"^\$LOCALE\" /etc/locale.gen || echo \"\$LOCALE UTF-8\" >> /etc/locale.gen
 
 # Descomentar si está comentado
 sed -i \"s/^#\\?\\s*\$LOCALE/\$LOCALE/\" /etc/locale.gen
@@ -877,13 +979,12 @@ locale-gen
 # =====================
 # VALIDACIÓN LOCALE (fallback real)
 # =====================
-if ! locale -a | grep -iq \"\${LOCALE%%.*}\"; then
+if ! locale -a 2>/dev/null | grep -iq \"^\${LOCALE%%.*}\"; then
   echo \"⚠️ Locale inválido, usando en_US.UTF-8\"
   LOCALE=\"en_US.UTF-8\"
 
-  grep -q \"^en_US.UTF-8\" /etc/locale.gen || echo \"en_US.UTF-8\" >> /etc/locale.gen
-  sed -i \"s/^#\\?\\s*en_US.UTF-8/en_US.UTF-8/\" /etc/locale.gen
-
+  grep -q \"^en_US.UTF-8\" /etc/locale.gen || echo \"en_US.UTF-8 UTF-8\" >> /etc/locale.gen
+  sed -i \"s/^#\\?\\s*en_US.UTF-8.*/en_US.UTF-8 UTF-8/\" /etc/locale.gen
   locale-gen
 fi
 
@@ -920,11 +1021,16 @@ until passwd; do
 done
 
 # Usuario
-useradd -m -G wheel,audio,realtime -s /bin/bash \"\$USERNAME\"
+useradd -m -c \"\$FULLNAME\" -G wheel,audio,realtime -s /bin/bash \"\$USERNAME\"
 
+# Prompt personalizado (mostrar nombre bonito)
+echo \"export PS1='\$FULLNAME@\\h:\\w\\$ '\" >> /home/\$USERNAME/.bashrc
 until passwd \"\$USERNAME\"; do
   echo '❗ Contraseña incorrecta para \$USERNAME. Intenta de nuevo.'
 done
+
+# Permisos correctos
+chown -R "$USERNAME:$USERNAME" /home/"$USERNAME"
 
 # SUDO automático (sin visudo)
 echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/wheel
@@ -968,8 +1074,6 @@ Name=VMware User Agent
 Exec=vmware-user
 X-GNOME-Autostart-enabled=true
 EOF
-
-chown -R \$USERNAME: /home/\$USERNAME/.config
 
 # Audio
 amixer sset Master unmute || true
@@ -1072,7 +1176,9 @@ seleccionar_discos_y_usuario
 fase_preinstall
 fase_particiones_cifrado
 fase_montaje_sistema
+init_defaults
 configurar_region
+validar_configuracion
 fase_post_install
 configurar_grub
 
