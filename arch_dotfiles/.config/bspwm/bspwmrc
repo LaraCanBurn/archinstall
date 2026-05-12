@@ -1,0 +1,5 @@
+#!/bin/sh
+sxhkd &
+picom &
+feh --bg-scale ~/Pictures/wallpaper.jpg &
+polybar example &
