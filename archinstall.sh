@@ -1029,8 +1029,15 @@ until passwd \"\$USERNAME\"; do
   echo '❗ Contraseña incorrecta para \$USERNAME. Intenta de nuevo.'
 done
 
+# Limpiar config XFCE
+rm -rf /home/\$USERNAME/.config
+rm -rf /home/\$USERNAME/.cache
+
 # Permisos correctos
-chown -R "$USERNAME:$USERNAME" /home/"$USERNAME"
+chown -R \"\$USERNAME:\$USERNAME\" /home/\"\$USERNAME\"
+
+# Crear config XFCE como usuario
+sudo -u \"\$USERNAME\" mkdir -p /home/\"\$USERNAME\"/.config
 
 # SUDO automático (sin visudo)
 echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/wheel
