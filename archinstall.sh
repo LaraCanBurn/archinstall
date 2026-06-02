@@ -174,12 +174,16 @@ function pacstrap_safe() {
 		# pacstrap con reintentos inteligentes y verificación post-instalación
 		echo -e "${CYAN}📦 Intento $n/$max de instalación base...${RESET}"
 		echo -e "${CYAN}📦 Paquetes a instalar:${RESET}"
-		echo "base linux-zen linux-zen-headers sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $MICROCODE"
+		echo "base linux-zen linux-zen-headers linux-lts linux-lts-headers dkms sof-firmware base-devel grub efibootmgr nano vim networkmanager lvm2 cryptsetup $MICROCODE"
 
 		echo -e "${CYAN}🔐 Inicializando keyring en /mnt...${RESET}"
 
 		if pacstrap -K /mnt \
-  		base linux-zen linux-zen-headers sof-firmware base-devel \
+  		base \
+  		linux-zen linux-zen-headers \
+ 		linux-lts linux-lts-headers \
+ 		dkms \
+ 		sof-firmware base-devel \
   		grub efibootmgr nano vim networkmanager lvm2 cryptsetup \
   		$([[ -n "$MICROCODE" ]] && echo "$MICROCODE") \
   		--cachedir=/mnt/var/cache/pacman/pkg \
@@ -188,7 +192,9 @@ function pacstrap_safe() {
   		&& [[ -d /mnt/etc ]] \
 		&& [[ -d /mnt/var ]] \
 		&& [[ -f /mnt/boot/vmlinuz-linux-zen ]] \
-		&& [[ -f /mnt/boot/initramfs-linux-zen.img ]]; then
+		&& [[ -f /mnt/boot/initramfs-linux-zen.img ]] \
+		&& [[ -f /mnt/boot/vmlinuz-linux-lts ]] \
+		&& [[ -f /mnt/boot/initramfs-linux-lts.img ]] then
 			echo -e "${GREEN}✅ pacstrap completado correctamente.${RESET}"
 			break
 		else
@@ -433,28 +439,60 @@ function fase_particiones_cifrado() {
 
 # 🔧 Instalación de ZFS (post-pacstrap)
 function instalar_zfs_autodetect() {
-	echo -e "${CYAN}🔍 Instalando ZFS DKMS para cualquier kernel...${RESET}"
+	echo -e "${CYAN}🔍 Instalando ZFS DKMS para los kernels instalados...${RESET}"
 
-	if ! grep -q "\[archzfs\]" /etc/pacman.conf; then
-		echo -e "\n[archzfs]\nServer = https://archzfs.com/\$repo/x86_64" >>/etc/pacman.conf
+	# Añadir repositorio archzfs si no existe
+	if ! grep -q "^\[archzfs\]" /etc/pacman.conf; then
+		echo -e "${CYAN}➕ Añadiendo repositorio archzfs...${RESET}"
+
+		cat >> /etc/pacman.conf <<'EOF'
+
+[archzfs]
+Server = https://archzfs.com/$repo/x86_64
+EOF
+
+		echo -e "${CYAN}🔑 Importando clave de archzfs...${RESET}"
 		pacman-key --recv-keys F75D9D76 --keyserver keyserver.ubuntu.com
 		pacman-key --lsign-key F75D9D76
-		pacman -Sy
+
+		echo -e "${CYAN}🔄 Sincronizando bases de datos de pacman...${RESET}"
+		pacman -Sy --noconfirm
 	fi
 
 	echo -e "${CYAN}📦 Instalando zfs-dkms y zfs-utils...${RESET}"
-	pacman -S --noconfirm zfs-dkms zfs-utils || {
-		echo -e "${YELLOW}⚠️ Fallback a AUR...${RESET}"
-		if command -v paru &>/dev/null; then
-			paru -S --noconfirm zfs-dkms zfs-utils
-		elif command -v yay &>/dev/null; then
-			yay -S --noconfirm zfs-dkms zfs-utils
-		else
-			echo -e "${RED}❌ No se encontró yay/paru.${RESET}"
-			exit 1
-		fi
+
+	pacman -S --noconfirm --needed zfs-dkms zfs-utils || {
+		echo -e "${RED}❌ Error instalando zfs-dkms/zfs-utils desde archzfs.${RESET}"
+		echo -e "${YELLOW}💡 No se intenta fallback a yay/paru porque no se instalan en este script.${RESET}"
+		exit 1
 	}
-	echo -e "${GREEN}✅ ZFS DKMS instalado correctamente.${RESET}"
+
+	echo -e "${GREEN}✅ ZFS instalado correctamente desde pacman/archzfs.${RESET}"
+
+	echo -e "${CYAN}🔧 Ejecutando dkms autoinstall...${RESET}"
+
+	dkms autoinstall || {
+		echo -e "${RED}❌ DKMS no pudo compilar ZFS para los kernels instalados.${RESET}"
+		echo -e "${YELLOW}📊 Estado DKMS:${RESET}"
+		dkms status || true
+		exit 1
+	}
+
+	echo -e "${CYAN}📊 Estado DKMS:${RESET}"
+	dkms status || true
+
+	echo -e "${CYAN}🔎 Verificando módulo zfs.ko compilado...${RESET}"
+
+	if ! find /usr/lib/modules -name "zfs.ko*" | grep -q zfs; then
+		echo -e "${RED}❌ No se encontró ningún módulo zfs.ko compilado.${RESET}"
+		echo -e "${YELLOW}💡 Posible causa:${RESET}"
+		echo -e "${YELLOW}   - linux-zen aún no compatible con esa versión de OpenZFS${RESET}"
+		echo -e "${YELLOW}   - faltan headers del kernel${RESET}"
+		echo -e "${YELLOW}   - fallo de DKMS durante la compilación${RESET}"
+		exit 1
+	fi
+
+	echo -e "${GREEN}✅ ZFS DKMS instalado, compilado y verificado correctamente.${RESET}"
 }
 
 function fase_montaje_sistema() {
@@ -481,14 +519,19 @@ function fase_montaje_sistema() {
 
 	pacstrap_safe
 
+	# Instalar ZFS solo si el usuario seleccionó discos ZFS
 	if ((${#ZFS_DISKS[@]} > 0)); then
-  	arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect"
+	echo -e "${CYAN}🔧 Instalando soporte ZFS dentro del sistema instalado...${RESET}"
+	arch-chroot /mnt bash -c "$(declare -f instalar_zfs_autodetect); instalar_zfs_autodetect"
+	else
+	echo -e "${YELLOW}ℹ No se seleccionaron discos ZFS. Se omite instalación de zfs-dkms/zfs-utils.${RESET}"
 	fi
-	
+
 	echo -e "${CYAN}⚙️ Configurando mkinitcpio para LUKS + LVM...${RESET}"
 
 	sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block encrypt lvm2 filesystems keyboard fsck)/' /mnt/etc/mkinitcpio.conf
 
+	echo -e "${CYAN}🔧 Regenerando initramfs para todos los kernels instalados...${RESET}"
 	arch-chroot /mnt mkinitcpio -P
 
 	echo -e "${CYAN}🔍 Verificando instalación base real...${RESET}"
@@ -547,11 +590,19 @@ function fase_montaje_sistema() {
 		echo -e "${RED}❌ /mnt/boot/initramfs-linux-zen.img no existe. El initramfs no se ha generado. Abortando...${RESET}"
 		exit 1
 	fi
+	if [[ ! -f /mnt/boot/vmlinuz-linux-lts ]]; then
+	echo -e "${RED}❌ /mnt/boot/vmlinuz-linux-lts no existe. El kernel LTS no se ha instalado. Abortando...${RESET}"
+	exit 1
+	fi
+	if [[ ! -f /mnt/boot/initramfs-linux-lts.img ]]; then
+	echo -e "${RED}❌ /mnt/boot/initramfs-linux-lts.img no existe. El initramfs LTS no se ha generado. Abortando...${RESET}"
+	exit 1
+	fi
 	if [[ -n "$MICROCODE" && ! -f /mnt/boot/${MICROCODE}.img ]]; then
     	echo -e "${RED}❌ /mnt/boot/${MICROCODE}.img no existe. El microcode no se ha instalado. Abortando...${RESET}"
     	exit 1
 	fi
-	echo -e "${GREEN}Sistema base, kernel, initramfs y microcode detectados correctamente.${RESET}"
+	echo -e "${GREEN}Sistema base, kernels linux-zen/linux-lts, initramfs y microcode detectados correctamente.${RESET}"
 
 	# --- Comprobación de consola ---
 	echo -e "${CYAN}🔎 Comprobando existencia de consola...${RESET}"
